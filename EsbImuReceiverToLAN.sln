@@ -5,6 +5,8 @@ VisualStudioVersion = 17.13.35919.96 d17.13
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EsbImuReceiverToLAN", "EsbImuReceiverToLAN\EsbImuReceiverToLAN.csproj", "{370C11DA-E973-4053-AC14-0931149CD73B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimeImuProtocol", "SlimeImuProtocol\SlimeImuProtocol.csproj", "{E4339CCE-C3F3-621A-0406-55396CAAC56D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{370C11DA-E973-4053-AC14-0931149CD73B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{370C11DA-E973-4053-AC14-0931149CD73B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{370C11DA-E973-4053-AC14-0931149CD73B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E4339CCE-C3F3-621A-0406-55396CAAC56D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E4339CCE-C3F3-621A-0406-55396CAAC56D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E4339CCE-C3F3-621A-0406-55396CAAC56D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E4339CCE-C3F3-621A-0406-55396CAAC56D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
