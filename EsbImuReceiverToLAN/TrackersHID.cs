@@ -399,17 +399,18 @@ namespace SlimeVR.Tracking.Trackers.HID {
 
                                 if (packetType == 255) // Device register packet
                                 {
-                                    sbyte[] data = new sbyte[8];
+                                    byte[] data = new byte[8];
                                     Array.Copy(dataReceived, i + 2, data, 0, 8);
-                                    ulong addr = BitConverter.ToUInt64((byte[])(Array)data, 0) & 0xFFFFFFFFFFFF;
+                                    ulong addr = BitConverter.ToUInt64(data, 0) & 0xFFFFFFFFFFFF;
                                     string deviceName = addr.ToString("X12");
                                     DeviceIdLookup(hidDevice, deviceId, deviceName, deviceList);
                                     continue;
                                 }
 
                                 var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
-                                if (device == null)
+                                if (device == null) {
                                     continue;
+                                }
 
                                 if (packetType == 0) // Tracker register
                                 {
@@ -457,7 +458,7 @@ namespace SlimeVR.Tracking.Trackers.HID {
                                         batt = dataReceived[i + 2];
                                         batt_v = dataReceived[i + 3];
                                         temp = dataReceived[i + 4];
-                                        sbyte[] data = new sbyte[4];
+                                        byte[] data = new byte[4];
                                         Array.Copy(dataReceived, i + 5, data, 0, 4);
                                         uint q_buf = BitConverter.ToUInt32((byte[])(Array)data, 0);
                                         q[0] = (int)(q_buf & 1023);
