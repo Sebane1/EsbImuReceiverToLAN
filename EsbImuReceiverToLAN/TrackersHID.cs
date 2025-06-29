@@ -169,21 +169,21 @@ namespace SlimeVR.Tracking.Trackers.HID {
                 }
 
                 // Create and register a new HIDDevice
-                var newDevice = new HIDDevice(deviceId) {
+                var device = new HIDDevice(deviceId) {
                     Name = deviceName,
                     Manufacturer = "HID Device",
                     HardwareIdentifier = deviceName
                 };
 
-                devices.Add(newDevice);
+                devices.Add(device);
                 deviceList.Add(devices.Count - 1);
 
                 // Example: You might have a VRServer instance managing devices
-                DeviceManager.Instance.AddDevice(newDevice);
+                DeviceManager.Instance.AddDevice(device);
 
                 Console.WriteLine($"[TrackerServer] Added device {deviceName} for {hidDevice.GetSerialNumber()}, id {deviceId}");
 
-                return newDevice;
+                return device;
             }
         }
         private void DataRead() {
@@ -206,12 +206,11 @@ namespace SlimeVR.Tracking.Trackers.HID {
                             if (!hidDevice.TryOpen(out stream)) {
                                 continue;
                             }
-                            byte[] dataReceived = new byte[64];
-                          //  //byte[] buffer = new byte[64]; // or the report length expected
+                            byte[] dataReceived = new byte[PACKET_SIZE * 2];
                             int bytesRead = stream.Read(dataReceived, 0, dataReceived.Length);
-                            // dataReceived = (sbyte[])(Array)buffer;
-                            if (bytesRead <= 0)
+                            if (bytesRead <= 0) {
                                 continue;
+                            }
 
                             devicesPresent = true;
 
@@ -226,8 +225,8 @@ namespace SlimeVR.Tracking.Trackers.HID {
                             int packetCount = dataReceived.Length / PACKET_SIZE;
 
                             for (int i = 0; i < packetCount * PACKET_SIZE; i += PACKET_SIZE) {
-                                int packetType = dataReceived[i] & 0xFF;
-                                int id = dataReceived[i + 1] & 0xFF;
+                                int packetType = dataReceived[i];
+                                int id = dataReceived[i + 1];
                                 int trackerId = 0; // no extensions in this context
                                 int deviceId = id;
 
@@ -248,8 +247,8 @@ namespace SlimeVR.Tracking.Trackers.HID {
 
                                 if (packetType == 0) // Tracker register
                                 {
-                                    int imuId = dataReceived[i + 8];
-                                    int magId = dataReceived[i + 9];
+                                    uint imuId = dataReceived[i + 8];
+                                    uint magId = dataReceived[i + 9];
                                     var sensorType = (ImuType)imuId;
                                     var magStatus = (MagnetometerStatus)magId;
                                     if (sensorType != null && magStatus != null)
@@ -257,8 +256,9 @@ namespace SlimeVR.Tracking.Trackers.HID {
                                 }
 
                                 var tracker = device.GetTracker(trackerId);
-                                if (tracker == null)
+                                if (tracker == null) {
                                     continue;
+                                }
 
                                 // Variables for data fields
                                 int? batt = null, batt_v = null, temp = null, brd_id = null, mcu_id = null;
@@ -473,7 +473,9 @@ namespace SlimeVR.Tracking.Trackers.HID {
             public float BatteryLevel {
                 get { return _batteryLevel; }
                 internal set {
-                    _udpHandler.SetSensorBattery(value);
+                    if (_ready) {
+                        _udpHandler.SetSensorBattery(value);
+                    }
                     _batteryLevel = value;
                 }
             }
@@ -483,6 +485,7 @@ namespace SlimeVR.Tracking.Trackers.HID {
 
             public TrackerStatus Status = TrackerStatus.Disconnected;
             UDPHandler _udpHandler;
+            private bool _ready;
             private float _batteryLevel;
 
             public Tracker(HIDDevice device, int trackerNum, string name, string displayName, bool hasRotation, bool hasAcceleration, bool userEditable, ImuType imuType, bool allowFiltering, bool needsReset, bool needsMounting, bool usesTimeout, MagnetometerStatus magStatus, TrackerStatus status) {
@@ -499,17 +502,29 @@ namespace SlimeVR.Tracking.Trackers.HID {
                 NeedsMounting = needsMounting;
                 UsesTimeout = usesTimeout;
                 MagStatus = magStatus;
-                _udpHandler = new UDPHandler(device.FirmwareVersion + "_UDP", Encoding.UTF8.GetBytes("UDP_" + device.HardwareIdentifier), device.BoardType, ImuType, device.McuType, 1);
+                Task.Run(() => {
+                    while (device.FirmwareVersion == null) {
+                        Thread.Sleep(1000);
+                    }
+                    _udpHandler = new UDPHandler(device.FirmwareVersion + "_EsbToLan", Encoding.UTF8.GetBytes("UDP_" + displayName), device.BoardType, ImuType, device.McuType, 1);
+                    _ready = true;
+                });
             }
 
             public void SetRotation(Quaternion q) {
-                _udpHandler.SetSensorRotation(q, 0);
+                if (_ready) {
+                    _udpHandler.SetSensorRotation(q, 0);
+                }
             }
             public void SetAcceleration(Vector3 a) {
-                _udpHandler.SetSensorAcceleration(a, 0);
+                if (_ready) {
+                    _udpHandler.SetSensorAcceleration(a, 0);
+                }
             }
             public void SetMagVector(Vector3 m) {
-                _udpHandler.SetSensorMagnetometer(m, 0);
+                if (_ready) {
+                    _udpHandler.SetSensorMagnetometer(m, 0);
+                }
             }
             public async Task DataTick() {
 
