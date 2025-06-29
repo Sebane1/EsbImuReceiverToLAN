@@ -264,8 +264,9 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                                 uint magId = dataReceived[i + 9];
                                 var sensorType = (ImuType)imuId;
                                 var magStatus = (MagnetometerStatus)magId;
-                                if (sensorType != ImuType.UNKNOWN && magStatus != null)
+                                if (sensorType != ImuType.UNKNOWN && magStatus != null) {
                                     SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
+                                }
                             }
 
                             var tracker = device.GetTracker(trackerId);
@@ -294,10 +295,10 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
 
                                 case 1: // full precision quat and accel
                                     for (int j = 0; j < 4; j++) {
-                                        q[j] = (dataReceived[i + 2 + j * 2 + 1] << 8) | dataReceived[i + 2 + j * 2];
+                                        q[j] = (short)((dataReceived[i + 2 + j * 2 + 1]) << 8) | (dataReceived[i + 2 + j * 2]);
                                     }
                                     for (int j = 0; j < 3; j++) {
-                                        a[j] = (dataReceived[i + 10 + j * 2 + 1] << 8) | dataReceived[i + 10 + j * 2];
+                                        a[j] = (short)((dataReceived[i + 10 + j * 2 + 1]) << 8) | (dataReceived[i + 10 + j * 2]);
                                     }
                                     break;
 
@@ -312,7 +313,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                                     q[1] = (int)((q_buf >> 10) & 2047);
                                     q[2] = (int)((q_buf >> 21) & 2047);
                                     for (int j = 0; j < 3; j++) {
-                                        a[j] = (dataReceived[i + 9 + j * 2 + 1] << 8) | dataReceived[i + 9 + j * 2];
+                                        a[j] = (short)((dataReceived[i + 9 + j * 2 + 1]) << 8) | (dataReceived[i + 9 + j * 2]);
                                     }
                                     rssi = dataReceived[i + 15];
                                     break;
@@ -324,10 +325,10 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
 
                                 case 4: // full precision quat and mag
                                     for (int j = 0; j < 4; j++) {
-                                        q[j] = (dataReceived[i + 2 + j * 2 + 1] << 8) | dataReceived[i + 2 + j * 2];
+                                        q[j] = (short)((dataReceived[i + 2 + j * 2 + 1]) << 8) | (dataReceived[i + 2 + j * 2]);
                                     }
                                     for (int j = 0; j < 3; j++) {
-                                        m[j] = (dataReceived[i + 10 + j * 2 + 1] << 8) | dataReceived[i + 10 + j * 2];
+                                        m[j] = (short)((dataReceived[i + 10 + j * 2 + 1]) << 8) | (dataReceived[i + 10 + j * 2]);
                                     }
                                     break;
                             }
@@ -388,8 +389,8 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                                     q[3] / 32768f
                                 );
 
-                                rot = Quaternion.Normalize(Quaternion.Multiply(AXES_OFFSET, rot));
-                                tracker.SetRotation(Quaternion.Normalize(rot));
+                               // rot = Quaternion.Multiply(AXES_OFFSET, rot);
+                                tracker.SetRotation(rot);
                             }
 
                             if (packetType == 2) {
@@ -408,14 +409,14 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                                 float s = (float)Math.Sin(aAngle);
                                 float k = s * invSqrtD;
 
-                                var rot = Quaternion.Normalize(new Quaternion(
+                                var rot = new Quaternion(
                                     k * v[0],
                                     k * v[1],
                                     k * v[2],
                                     (float)Math.Cos(aAngle)
-                                ));
+                                );
 
-                                rot = Quaternion.Multiply(AXES_OFFSET, rot);
+                               // rot = Quaternion.Multiply(AXES_OFFSET, rot);
                                 tracker.SetRotation(rot);
                             }
 
