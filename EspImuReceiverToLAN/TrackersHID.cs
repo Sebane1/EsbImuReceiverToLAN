@@ -8,7 +8,7 @@ using HidSharp.Reports;
 using System.IO;
 using System.Numerics;
 using static Everything_To_IMU_SlimeVR.SlimeVR.FirmwareConstants;
-using EsbImuReceiverToLAN;
+using EspImuReceiverToLAN;
 using static SlimeVR.Tracking.Trackers.HID.TrackersHID;
 using Everything_To_IMU_SlimeVR.SlimeVR;
 using System.Collections;
@@ -32,6 +32,9 @@ namespace SlimeVR.Tracking.Trackers.HID {
 
         private readonly Thread dataReadThread;
         private readonly Thread deviceEnumerateThread;
+
+        public Quaternion AXES_OFFSET { get; }
+
         public event EventHandler<Tracker> trackersConsumer;
 
         public TrackersHID() {
@@ -48,6 +51,12 @@ namespace SlimeVR.Tracking.Trackers.HID {
                 Name = "hidsharp device enumerator"
             };
             deviceEnumerateThread.Start();
+
+            // Apply AXES_OFFSET * rot
+            float angle = -MathF.PI / 2;
+
+            // Create quaternion from axis-angle
+            AXES_OFFSET = Quaternion.CreateFromAxisAngle(Vector3.UnitX, angle);
         }
 
         private void CheckConfigureDevice(HidDevice hidDevice) {
@@ -142,7 +151,19 @@ namespace SlimeVR.Tracking.Trackers.HID {
                     ? device.HardwareIdentifier.Replace(":", "").Substring(device.HardwareIdentifier.Replace(":", "").Length - 5)
                     : device.HardwareIdentifier.Replace(":", "");
 
-                imuTracker = new Tracker(device, trackerId, $"{device.Name}/{trackerId}", $"Tracker {formattedHWID}", true, true, true, sensorType, true, true, true, false, magStatus, sensorStatus);
+                imuTracker = new Tracker(device,
+                    trackerId,
+                    $"{device.Name}/{trackerId}",
+                    $"Tracker {formattedHWID}",
+                    true,
+                    true,
+                    true,
+                    sensorType,
+                    true,
+                    true,
+                    true,
+                    false,
+                    magStatus);
 
                 device.Trackers[trackerId] = imuTracker;
 
@@ -201,228 +222,225 @@ namespace SlimeVR.Tracking.Trackers.HID {
                         HidDevice hidDevice = kvp.Key;
                         List<int> deviceList = kvp.Value;
 
-                        try {
-                            HidStream stream = null;
-                            if (!hidDevice.TryOpen(out stream)) {
-                                continue;
-                            }
-                            byte[] dataReceived = new byte[PACKET_SIZE * 2];
-                            int bytesRead = stream.Read(dataReceived, 0, dataReceived.Length);
-                            if (bytesRead <= 0) {
-                                continue;
-                            }
-
-                            devicesPresent = true;
-
-                            if (dataReceived.Length % PACKET_SIZE != 0) {
-                                Console.WriteLine("[TrackerServer] Malformed HID packet, ignoring");
-                                continue;
-                            }
-
-                            devicesDataReceived = true;
-                            lastDataByHID[hidDevice] = 0;
-
-                            int packetCount = dataReceived.Length / PACKET_SIZE;
-
-                            for (int i = 0; i < packetCount * PACKET_SIZE; i += PACKET_SIZE) {
-                                int packetType = dataReceived[i];
-                                int id = dataReceived[i + 1];
-                                int trackerId = 0; // no extensions in this context
-                                int deviceId = id;
-
-                                if (packetType == 255) // Device register packet
-                                {
-                                    byte[] data = new byte[8];
-                                    Array.Copy(dataReceived, i + 2, data, 0, 8);
-                                    ulong addr = BitConverter.ToUInt64(data, 0) & 0xFFFFFFFFFFFF;
-                                    string deviceName = addr.ToString("X12");
-                                    DeviceIdLookup(hidDevice, deviceId, deviceName, deviceList);
-                                    continue;
-                                }
-
-                                var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
-                                if (device == null) {
-                                    continue;
-                                }
-
-                                if (packetType == 0) // Tracker register
-                                {
-                                    uint imuId = dataReceived[i + 8];
-                                    uint magId = dataReceived[i + 9];
-                                    var sensorType = (ImuType)imuId;
-                                    var magStatus = (MagnetometerStatus)magId;
-                                    if (sensorType != null && magStatus != null)
-                                        SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
-                                }
-
-                                var tracker = device.GetTracker(trackerId);
-                                if (tracker == null) {
-                                    continue;
-                                }
-
-                                // Variables for data fields
-                                int? batt = null, batt_v = null, temp = null, brd_id = null, mcu_id = null;
-                                int? fw_date = null, fw_major = null, fw_minor = null, fw_patch = null;
-                                int? svr_status = null, rssi = null;
-
-                                switch (packetType) {
-                                    case 0: // device info
-                                        batt = dataReceived[i + 2];
-                                        batt_v = dataReceived[i + 3];
-                                        temp = dataReceived[i + 4];
-                                        brd_id = dataReceived[i + 5];
-                                        mcu_id = dataReceived[i + 6];
-                                        fw_date = (dataReceived[i + 11] << 8) | dataReceived[i + 10];
-                                        fw_major = dataReceived[i + 12];
-                                        fw_minor = dataReceived[i + 13];
-                                        fw_patch = dataReceived[i + 14];
-                                        rssi = dataReceived[i + 15];
-                                        break;
-
-                                    case 1: // full precision quat and accel
-                                        for (int j = 0; j < 4; j++) {
-                                            q[j] = (dataReceived[i + 2 + j * 2 + 1] << 8) | dataReceived[i + 2 + j * 2];
-                                        }
-                                        for (int j = 0; j < 3; j++) {
-                                            a[j] = (dataReceived[i + 10 + j * 2 + 1] << 8) | dataReceived[i + 10 + j * 2];
-                                        }
-                                        break;
-
-                                    case 2: // reduced precision quat and accel with data
-                                        batt = dataReceived[i + 2];
-                                        batt_v = dataReceived[i + 3];
-                                        temp = dataReceived[i + 4];
-                                        byte[] data = new byte[4];
-                                        Array.Copy(dataReceived, i + 5, data, 0, 4);
-                                        uint q_buf = BitConverter.ToUInt32(data, 0);
-                                        q[0] = (int)(q_buf & 1023);
-                                        q[1] = (int)((q_buf >> 10) & 2047);
-                                        q[2] = (int)((q_buf >> 21) & 2047);
-                                        for (int j = 0; j < 3; j++) {
-                                            a[j] = (dataReceived[i + 9 + j * 2 + 1] << 8) | dataReceived[i + 9 + j * 2];
-                                        }
-                                        rssi = dataReceived[i + 15];
-                                        break;
-
-                                    case 3: // status
-                                        svr_status = dataReceived[i + 2];
-                                        rssi = dataReceived[i + 15];
-                                        break;
-
-                                    case 4: // full precision quat and mag
-                                        for (int j = 0; j < 4; j++) {
-                                            q[j] = (dataReceived[i + 2 + j * 2 + 1] << 8) | dataReceived[i + 2 + j * 2];
-                                        }
-                                        for (int j = 0; j < 3; j++) {
-                                            m[j] = (dataReceived[i + 10 + j * 2 + 1] << 8) | dataReceived[i + 10 + j * 2];
-                                        }
-                                        break;
-                                }
-
-                                // Assign battery level
-                                if (batt != null) {
-                                    tracker.BatteryLevel = (batt == 128) ? 1f : (batt.Value & 127);
-                                }
-                                // Battery voltage
-                                if (batt_v != null) {
-                                    tracker.BatteryVoltage = (batt_v.Value + 245f) / 100f;
-                                }
-                                // Temperature
-                                if (temp != null)
-                                    tracker.Temperature = (temp > 0) ? (temp.Value / 2f - 39f) : (float?)null;
-
-                                // Board Type
-                                if (brd_id != null) {
-                                    var boardType = (BoardType)brd_id.Value;
-                                    if (boardType != null)
-                                        device.BoardType = boardType;
-                                }
-
-                                // MCU Type
-                                if (mcu_id != null) {
-                                    var mcuType = (McuType)mcu_id.Value;
-                                    if (mcuType != null)
-                                        device.McuType = mcuType;
-                                }
-
-                                // Firmware version string
-                                if (fw_date != null && fw_major != null && fw_minor != null && fw_patch != null) {
-                                    int firmwareYear = 2020 + ((fw_date.Value >> 9) & 127);
-                                    int firmwareMonth = (fw_date.Value >> 5) & 15;
-                                    int firmwareDay = fw_date.Value & 31;
-                                    string firmwareDate = $"{firmwareYear:D4}-{firmwareMonth:D2}-{firmwareDay:D2}";
-                                    device.FirmwareVersion = $"{fw_major}.{fw_minor}.{fw_patch} (Build {firmwareDate})";
-                                }
-
-                                // Tracker status
-                                if (svr_status != null) {
-                                    var status = (TrackerStatus)svr_status.Value;
-                                    if (status != null)
-                                        tracker.Status = status;
-                                }
-
-                                // RSSI / Signal strength
-                                if (rssi != null)
-                                    tracker.SignalStrength = -rssi.Value;
-
-                                // Rotation and acceleration
-                                if (packetType == 1 || packetType == 4) {
-                                    // Convert Q15 short to float and reorder quaternion as w,x,y,z
-                                    var rot = new Quaternion(
-                                        q[3] / 32768f,
-                                        q[0] / 32768f,
-                                        q[1] / 32768f,
-                                        q[2] / 32768f
-                                    );
-
-                                    // Apply axes offset rotation if needed (not shown here)
-
-                                    tracker.SetRotation(rot);
-                                }
-
-                                if (packetType == 2) {
-                                    float[] v = new float[3];
-                                    v[0] = q[0] / 1024f;
-                                    v[1] = q[1] / 2048f;
-                                    v[2] = q[2] / 2048f;
-
-                                    for (int x = 0; x < 3; x++)
-                                        v[x] = v[x] * 2 - 1;
-
-                                    float d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-                                    float invSqrtD = 1.0f / (float)Math.Sqrt(d + 1e-6f);
-                                    float aAngle = (float)(Math.PI / 2) * d * invSqrtD;
-                                    float s = (float)Math.Sin(aAngle);
-                                    float k = s * invSqrtD;
-
-                                    var rot = new Quaternion(
-                                        (float)Math.Cos(aAngle),
-                                        k * v[0],
-                                        k * v[1],
-                                        k * v[2]
-                                    );
-
-                                    // Apply axes offset rotation if needed
-
-                                    tracker.SetRotation(rot);
-                                }
-
-                                if (packetType == 1 || packetType == 2) {
-                                    Vector3 acceleration = new Vector3(a[0], a[1], a[2]) * (1f / 128f);
-                                    tracker.SetAcceleration(acceleration);
-                                }
-
-                                if (packetType == 4) {
-                                    Vector3 magnetometer = new Vector3(m[0], m[1], m[2]) * (1000f / 1024f);
-                                    tracker.SetMagVector(magnetometer);
-                                }
-
-                                if (packetType == 1 || packetType == 2 || packetType == 4) {
-                                    tracker.DataTick();
-                                }
-                            }
-                        } catch (IOException) {
+                        HidStream stream = null;
+                        if (!hidDevice.TryOpen(out stream)) {
                             continue;
+                        }
+                        byte[] newData = new byte[65]; // 1 byte report ID + 64 bytes payload
+                        int bytesRead = stream.Read(newData, 0, newData.Length);
+                        int offset = (newData.Length % PACKET_SIZE == 0) ? 0 : 1;
+                        int validLength = newData.Length - offset;
+                        byte[] dataReceived = new byte[validLength];
+                        Array.Copy(newData, offset, dataReceived, 0, validLength);
+                        if (dataReceived.Length == 0) {
+                            continue;
+                        }
+                        devicesPresent = true;
+
+                        if (dataReceived.Length % PACKET_SIZE != 0) {
+                            Console.WriteLine("[TrackerServer] Malformed HID packet, ignoring");
+                            continue;
+                        }
+
+                        devicesDataReceived = true;
+                        lastDataByHID[hidDevice] = 0;
+
+                        int packetCount = dataReceived.Length / PACKET_SIZE;
+
+                        for (int i = 0; i < packetCount * PACKET_SIZE; i += PACKET_SIZE) {
+                            int packetType = dataReceived[i];
+                            int id = dataReceived[i + 1];
+                            int trackerId = 0; // no extensions in this context
+                            int deviceId = id;
+
+                            if (packetType == 255) // Device register packet
+                            {
+                                byte[] data = new byte[8];
+                                Array.Copy(dataReceived, i + 2, data, 0, 8);
+                                ulong addr = BitConverter.ToUInt64(data, 0) & 0xFFFFFFFFFFFF;
+                                string deviceName = addr.ToString("X12");
+                                DeviceIdLookup(hidDevice, deviceId, deviceName, deviceList);
+                                continue;
+                            }
+
+                            var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
+                            if (device == null) {
+                                continue;
+                            }
+
+                            if (packetType == 0) // Tracker register
+                            {
+                                uint imuId = dataReceived[i + 8];
+                                uint magId = dataReceived[i + 9];
+                                var sensorType = (ImuType)imuId;
+                                var magStatus = (MagnetometerStatus)magId;
+                                if (sensorType != ImuType.UNKNOWN && magStatus != null)
+                                    SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
+                            }
+
+                            var tracker = device.GetTracker(trackerId);
+                            if (tracker == null) {
+                                continue;
+                            }
+
+                            // Variables for data fields
+                            int? batt = null, batt_v = null, temp = null, brd_id = null, mcu_id = null;
+                            int? fw_date = null, fw_major = null, fw_minor = null, fw_patch = null;
+                            int? svr_status = null, rssi = null;
+
+                            switch (packetType) {
+                                case 0: // device info
+                                    batt = dataReceived[i + 2];
+                                    batt_v = dataReceived[i + 3];
+                                    temp = dataReceived[i + 4];
+                                    brd_id = dataReceived[i + 5];
+                                    mcu_id = dataReceived[i + 6];
+                                    fw_date = (dataReceived[i + 11] << 8) | dataReceived[i + 10];
+                                    fw_major = dataReceived[i + 12];
+                                    fw_minor = dataReceived[i + 13];
+                                    fw_patch = dataReceived[i + 14];
+                                    rssi = dataReceived[i + 15];
+                                    break;
+
+                                case 1: // full precision quat and accel
+                                    for (int j = 0; j < 4; j++) {
+                                        q[j] = (dataReceived[i + 2 + j * 2 + 1] << 8) | dataReceived[i + 2 + j * 2];
+                                    }
+                                    for (int j = 0; j < 3; j++) {
+                                        a[j] = (dataReceived[i + 10 + j * 2 + 1] << 8) | dataReceived[i + 10 + j * 2];
+                                    }
+                                    break;
+
+                                case 2: // reduced precision quat and accel with data
+                                    batt = dataReceived[i + 2];
+                                    batt_v = dataReceived[i + 3];
+                                    temp = dataReceived[i + 4];
+                                    byte[] data = new byte[4];
+                                    Array.Copy(dataReceived, i + 5, data, 0, 4);
+                                    uint q_buf = BitConverter.ToUInt32(data, 0);
+                                    q[0] = (int)(q_buf & 1023);
+                                    q[1] = (int)((q_buf >> 10) & 2047);
+                                    q[2] = (int)((q_buf >> 21) & 2047);
+                                    for (int j = 0; j < 3; j++) {
+                                        a[j] = (dataReceived[i + 9 + j * 2 + 1] << 8) | dataReceived[i + 9 + j * 2];
+                                    }
+                                    rssi = dataReceived[i + 15];
+                                    break;
+
+                                case 3: // status
+                                    svr_status = dataReceived[i + 2];
+                                    rssi = dataReceived[i + 15];
+                                    break;
+
+                                case 4: // full precision quat and mag
+                                    for (int j = 0; j < 4; j++) {
+                                        q[j] = (dataReceived[i + 2 + j * 2 + 1] << 8) | dataReceived[i + 2 + j * 2];
+                                    }
+                                    for (int j = 0; j < 3; j++) {
+                                        m[j] = (dataReceived[i + 10 + j * 2 + 1] << 8) | dataReceived[i + 10 + j * 2];
+                                    }
+                                    break;
+                            }
+
+                            // Assign battery level
+                            if (batt != null) {
+                                tracker.BatteryLevel = (batt == 128) ? 1f : (batt.Value & 127);
+                            }
+                            // Battery voltage
+                            if (batt_v != null) {
+                                tracker.BatteryVoltage = (batt_v.Value + 245f) / 100f;
+                            }
+                            // Temperature
+                            if (temp != null)
+                                tracker.Temperature = (temp > 0) ? (temp.Value / 2f - 39f) : (float?)null;
+
+                            // Board Type
+                            if (brd_id != null) {
+                                var boardType = (BoardType)brd_id.Value;
+                                if (boardType != null)
+                                    device.BoardType = boardType;
+                            }
+
+                            // MCU Type
+                            if (mcu_id != null) {
+                                var mcuType = (McuType)mcu_id.Value;
+                                if (mcuType != null)
+                                    device.McuType = mcuType;
+                            }
+
+                            // Firmware version string
+                            if (fw_date != null && fw_major != null && fw_minor != null && fw_patch != null) {
+                                int firmwareYear = 2020 + ((fw_date.Value >> 9) & 127);
+                                int firmwareMonth = (fw_date.Value >> 5) & 15;
+                                int firmwareDay = fw_date.Value & 31;
+                                string firmwareDate = $"{firmwareYear:D4}-{firmwareMonth:D2}-{firmwareDay:D2}";
+                                device.FirmwareVersion = $"{fw_major}.{fw_minor}.{fw_patch} (Build {firmwareDate})";
+                            }
+
+                            // Tracker status
+                            if (svr_status != null) {
+                                var status = (TrackerStatus)svr_status.Value;
+                                if (status != null)
+                                    tracker.Status = status;
+                            }
+
+                            // RSSI / Signal strength
+                            if (rssi != null)
+                                tracker.SignalStrength = -rssi.Value;
+
+                            // Rotation and acceleration
+                            if (packetType == 1 || packetType == 4) {
+                                // Convert Q15 short to float and reorder quaternion as w,x,y,z
+                                var rot = new Quaternion(
+                                    q[3] / 32768f,
+                                    q[0] / 32768f,
+                                    q[1] / 32768f,
+                                    q[2] / 32768f
+                                );
+
+                                Quaternion scaledRot = Quaternion.Multiply(AXES_OFFSET, rot);
+                                tracker.SetRotation(scaledRot);
+                            }
+
+                            if (packetType == 2) {
+                                float[] v = new float[3];
+                                v[0] = q[0] / 1024f;
+                                v[1] = q[1] / 2048f;
+                                v[2] = q[2] / 2048f;
+
+                                for (int x = 0; x < 3; x++)
+                                    v[x] = v[x] * 2 - 1;
+
+                                float d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+                                float invSqrtD = 1.0f / (float)Math.Sqrt(d + 1e-6f);
+                                float aAngle = (float)(Math.PI / 2) * d * invSqrtD;
+                                float s = (float)Math.Sin(aAngle);
+                                float k = s * invSqrtD;
+
+                                var rot = new Quaternion(
+                                    (float)Math.Cos(aAngle),
+                                    k * v[0],
+                                    k * v[1],
+                                    k * v[2]
+                                );
+
+                                Quaternion scaledRot = Quaternion.Multiply(AXES_OFFSET, rot);
+                                tracker.SetRotation(scaledRot);
+                            }
+
+                            if (packetType == 1 || packetType == 2) {
+                                Vector3 acceleration = new Vector3(a[0], a[1], a[2]) * (1f / 128f);
+                                tracker.SetAcceleration(acceleration);
+                            }
+
+                            if (packetType == 4) {
+                                Vector3 magnetometer = new Vector3(m[0], m[1], m[2]) * (1000f / 1024f);
+                                tracker.SetMagVector(magnetometer);
+                            }
+
+                            if (packetType == 1 || packetType == 2 || packetType == 4) {
+                                tracker.DataTick();
+                            }
                         }
                     }
 
@@ -434,7 +452,144 @@ namespace SlimeVR.Tracking.Trackers.HID {
             }
         }
 
+        private void DataReadBinaryReader() {
+            while (true) {
+                Thread.Sleep(1);
+                int[] q = new int[4];
+                int[] a = new int[3];
+                int[] m = new int[3];
 
+                lock (devicesByHID) {
+                    bool devicesPresent = false;
+                    bool devicesDataReceived = false;
+
+                    foreach (var kvp in devicesByHID) {
+                        HidDevice hidDevice = kvp.Key;
+                        List<int> deviceList = kvp.Value;
+
+                        if (!hidDevice.TryOpen(out HidStream stream)) {
+                            continue;
+                        }
+
+                        byte[] dataReceived = new byte[PACKET_SIZE * 10];
+                        int bytesRead = stream.Read(dataReceived, 0, dataReceived.Length);
+                        if (bytesRead <= 0) {
+                            continue;
+                        }
+
+                        devicesPresent = true;
+
+                        if (dataReceived.Length % PACKET_SIZE != 0) {
+                            Console.WriteLine("[TrackerServer] Malformed HID packet, ignoring");
+                            continue;
+                        }
+
+                        devicesDataReceived = true;
+                        lastDataByHID[hidDevice] = 0;
+
+                        int packetCount = dataReceived.Length / PACKET_SIZE;
+                        using (var memoryStream = new MemoryStream(dataReceived))
+                        using (var reader = new BinaryReader(memoryStream)) {
+                            for (int i = 0; i < packetCount; i++) {
+                                long packetStart = i * PACKET_SIZE;
+                                reader.BaseStream.Seek(packetStart, SeekOrigin.Begin);
+
+                                int packetType = reader.ReadByte();
+                                int id = reader.ReadByte();
+                                int trackerId = 0;
+                                int deviceId = id;
+
+                                if (packetType == 255) {
+                                    ulong addr = reader.ReadUInt64() & 0xFFFFFFFFFFFF;
+                                    string deviceName = addr.ToString("X12");
+                                    DeviceIdLookup(hidDevice, deviceId, deviceName, deviceList);
+                                    continue;
+                                }
+
+                                var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
+                                if (device == null) continue;
+
+                                if (packetType == 0) {
+                                    reader.BaseStream.Seek(packetStart + 8, SeekOrigin.Begin);
+                                    uint imuId = reader.ReadByte();
+                                    uint magId = reader.ReadByte();
+                                    var sensorType = (ImuType)imuId;
+                                    var magStatus = (MagnetometerStatus)magId;
+                                    if (sensorType != null && magStatus != null)
+                                        SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
+                                }
+
+                                var tracker = device.GetTracker(trackerId);
+                                if (tracker == null) continue;
+
+                                int? batt = null, batt_v = null, temp = null, brd_id = null, mcu_id = null;
+                                int? fw_date = null, fw_major = null, fw_minor = null, fw_patch = null;
+                                int? svr_status = null, rssi = null;
+
+                                switch (packetType) {
+                                    case 0:
+                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
+                                        batt = reader.ReadByte();
+                                        batt_v = reader.ReadByte();
+                                        temp = reader.ReadByte();
+                                        brd_id = reader.ReadByte();
+                                        mcu_id = reader.ReadByte();
+                                        reader.BaseStream.Seek(packetStart + 10, SeekOrigin.Begin);
+                                        fw_date = reader.ReadByte() | (reader.ReadByte() << 8);
+                                        fw_major = reader.ReadByte();
+                                        fw_minor = reader.ReadByte();
+                                        fw_patch = reader.ReadByte();
+                                        rssi = reader.ReadByte();
+                                        break;
+
+                                    case 1:
+                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
+                                        for (int j = 0; j < 4; j++) q[j] = reader.ReadInt16();
+                                        for (int j = 0; j < 3; j++) a[j] = reader.ReadInt16();
+                                        break;
+
+                                    case 2:
+                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
+                                        batt = reader.ReadByte();
+                                        batt_v = reader.ReadByte();
+                                        temp = reader.ReadByte();
+                                        uint q_buf = reader.ReadUInt32();
+                                        q[0] = (int)(q_buf & 1023);
+                                        q[1] = (int)((q_buf >> 10) & 2047);
+                                        q[2] = (int)((q_buf >> 21) & 2047);
+                                        reader.BaseStream.Seek(packetStart + 9, SeekOrigin.Begin);
+                                        for (int j = 0; j < 3; j++) a[j] = reader.ReadInt16();
+                                        reader.BaseStream.Seek(packetStart + 15, SeekOrigin.Begin);
+                                        rssi = reader.ReadByte();
+                                        break;
+
+                                    case 3:
+                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
+                                        svr_status = reader.ReadByte();
+                                        reader.BaseStream.Seek(packetStart + 15, SeekOrigin.Begin);
+                                        rssi = reader.ReadByte();
+                                        break;
+
+                                    case 4:
+                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
+                                        for (int j = 0; j < 4; j++) q[j] = reader.ReadInt16();
+                                        for (int j = 0; j < 3; j++) m[j] = reader.ReadInt16();
+                                        break;
+                                }
+
+                                // Assign parsed data to tracker (same as your original logic)...
+                                // Note: Omitted here for brevity. Keep the existing assignment and quaternion logic.
+                            }
+                        }
+                    }
+
+                    if (!devicesPresent)
+                        Thread.Sleep(10);
+                    else if (!devicesDataReceived)
+                        Thread.Sleep(1);
+                }
+            }
+        }
         // Placeholder classes for integration:
         public class HIDDevice {
             public int Id;
@@ -473,10 +628,10 @@ namespace SlimeVR.Tracking.Trackers.HID {
             public float BatteryLevel {
                 get { return _batteryLevel; }
                 internal set {
-                    if (_ready) {
-                        _udpHandler.SetSensorBattery(value);
-                    }
                     _batteryLevel = value;
+                    if (_ready) {
+                        _udpHandler.SetSensorBattery(_batteryLevel, BatteryVoltage);
+                    }
                 }
             }
             public float BatteryVoltage { get; internal set; }
@@ -488,7 +643,7 @@ namespace SlimeVR.Tracking.Trackers.HID {
             private bool _ready;
             private float _batteryLevel;
 
-            public Tracker(HIDDevice device, int trackerNum, string name, string displayName, bool hasRotation, bool hasAcceleration, bool userEditable, ImuType imuType, bool allowFiltering, bool needsReset, bool needsMounting, bool usesTimeout, MagnetometerStatus magStatus, TrackerStatus status) {
+            public Tracker(HIDDevice device, int trackerNum, string name, string displayName, bool hasRotation, bool hasAcceleration, bool userEditable, ImuType imuType, bool allowFiltering, bool needsReset, bool needsMounting, bool usesTimeout, MagnetometerStatus magStatus) {
                 Device = device;
                 TrackerNum = trackerNum;
                 Name = name;
@@ -506,7 +661,7 @@ namespace SlimeVR.Tracking.Trackers.HID {
                     while (device.FirmwareVersion == null) {
                         Thread.Sleep(1000);
                     }
-                    _udpHandler = new UDPHandler(device.FirmwareVersion + "_EsbToLan", Encoding.UTF8.GetBytes("UDP_" + displayName), device.BoardType, ImuType, device.McuType, 1);
+                    _udpHandler = new UDPHandler(device.FirmwareVersion + "_EspToLan", Encoding.UTF8.GetBytes(device.HardwareIdentifier), device.BoardType, ImuType, device.McuType, 1);
                     _ready = true;
                 });
             }
