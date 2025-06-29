@@ -33,7 +33,7 @@ namespace SlimeVR.Tracking.Trackers.HID {
         private readonly Thread dataReadThread;
         private readonly Thread deviceEnumerateThread;
 
-        public Quaternion AXES_OFFSET { get; }
+        public Quaternion AXES_OFFSET { get; internal set; }
 
         public event EventHandler<Tracker> trackersConsumer;
 
@@ -392,10 +392,10 @@ namespace SlimeVR.Tracking.Trackers.HID {
                             if (packetType == 1 || packetType == 4) {
                                 // Convert Q15 short to float and reorder quaternion as w,x,y,z
                                 var rot = new Quaternion(
-                                    q[3] / 32768f,
                                     q[0] / 32768f,
                                     q[1] / 32768f,
-                                    q[2] / 32768f
+                                    q[2] / 32768f,
+                                    q[3] / 32768f
                                 );
 
                                 Quaternion scaledRot = Quaternion.Multiply(AXES_OFFSET, rot);
@@ -408,8 +408,9 @@ namespace SlimeVR.Tracking.Trackers.HID {
                                 v[1] = q[1] / 2048f;
                                 v[2] = q[2] / 2048f;
 
-                                for (int x = 0; x < 3; x++)
+                                for (int x = 0; x < 3; x++) {
                                     v[x] = v[x] * 2 - 1;
+                                }
 
                                 float d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
                                 float invSqrtD = 1.0f / (float)Math.Sqrt(d + 1e-6f);
@@ -418,10 +419,10 @@ namespace SlimeVR.Tracking.Trackers.HID {
                                 float k = s * invSqrtD;
 
                                 var rot = new Quaternion(
-                                    (float)Math.Cos(aAngle),
                                     k * v[0],
                                     k * v[1],
-                                    k * v[2]
+                                    k * v[2],
+                                    (float)Math.Cos(aAngle)
                                 );
 
                                 Quaternion scaledRot = Quaternion.Multiply(AXES_OFFSET, rot);
