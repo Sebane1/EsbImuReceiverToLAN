@@ -5,6 +5,7 @@ using static Everything_To_IMU_SlimeVR.SlimeVR.FirmwareConstants;
 using EspImuReceiverToLAN;
 using Everything_To_IMU_SlimeVR.SlimeVR;
 using System.Text;
+using Everything_To_IMU_SlimeVR.Utility;
 
 namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
     public class TrackersHID {
@@ -387,8 +388,8 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                                     q[3] / 32768f
                                 );
 
-                                rot = Quaternion.Multiply(AXES_OFFSET, rot);
-                                tracker.SetRotation(rot);
+                                rot = Quaternion.Normalize(Quaternion.Multiply(AXES_OFFSET, rot));
+                                tracker.SetRotation(Quaternion.Normalize(rot));
                             }
 
                             if (packetType == 2) {
@@ -407,12 +408,12 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                                 float s = (float)Math.Sin(aAngle);
                                 float k = s * invSqrtD;
 
-                                var rot = new Quaternion(
+                                var rot = Quaternion.Normalize(new Quaternion(
                                     k * v[0],
                                     k * v[1],
                                     k * v[2],
                                     (float)Math.Cos(aAngle)
-                                );
+                                ));
 
                                 rot = Quaternion.Multiply(AXES_OFFSET, rot);
                                 tracker.SetRotation(rot);
@@ -442,144 +443,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
             }
         }
 
-        private void DataReadBinaryReader() {
-            while (true) {
-                Thread.Sleep(1);
-                int[] q = new int[4];
-                int[] a = new int[3];
-                int[] m = new int[3];
-
-                lock (devicesByHID) {
-                    bool devicesPresent = false;
-                    bool devicesDataReceived = false;
-
-                    foreach (var kvp in devicesByHID) {
-                        HidDevice hidDevice = kvp.Key;
-                        List<int> deviceList = kvp.Value;
-
-                        if (!hidDevice.TryOpen(out HidStream stream)) {
-                            continue;
-                        }
-
-                        byte[] dataReceived = new byte[PACKET_SIZE * 10];
-                        int bytesRead = stream.Read(dataReceived, 0, dataReceived.Length);
-                        if (bytesRead <= 0) {
-                            continue;
-                        }
-
-                        devicesPresent = true;
-
-                        if (dataReceived.Length % PACKET_SIZE != 0) {
-                            Console.WriteLine("[TrackerServer] Malformed HID packet, ignoring");
-                            continue;
-                        }
-
-                        devicesDataReceived = true;
-                        lastDataByHID[hidDevice] = 0;
-
-                        int packetCount = dataReceived.Length / PACKET_SIZE;
-                        using (var memoryStream = new MemoryStream(dataReceived))
-                        using (var reader = new BinaryReader(memoryStream)) {
-                            for (int i = 0; i < packetCount; i++) {
-                                long packetStart = i * PACKET_SIZE;
-                                reader.BaseStream.Seek(packetStart, SeekOrigin.Begin);
-
-                                int packetType = reader.ReadByte();
-                                int id = reader.ReadByte();
-                                int trackerId = 0;
-                                int deviceId = id;
-
-                                if (packetType == 255) {
-                                    ulong addr = reader.ReadUInt64() & 0xFFFFFFFFFFFF;
-                                    string deviceName = addr.ToString("X12");
-                                    DeviceIdLookup(hidDevice, deviceId, deviceName, deviceList);
-                                    continue;
-                                }
-
-                                var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
-                                if (device == null) continue;
-
-                                if (packetType == 0) {
-                                    reader.BaseStream.Seek(packetStart + 8, SeekOrigin.Begin);
-                                    uint imuId = reader.ReadByte();
-                                    uint magId = reader.ReadByte();
-                                    var sensorType = (ImuType)imuId;
-                                    var magStatus = (MagnetometerStatus)magId;
-                                    if (sensorType != null && magStatus != null)
-                                        SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
-                                }
-
-                                var tracker = device.GetTracker(trackerId);
-                                if (tracker == null) continue;
-
-                                int? batt = null, batt_v = null, temp = null, brd_id = null, mcu_id = null;
-                                int? fw_date = null, fw_major = null, fw_minor = null, fw_patch = null;
-                                int? svr_status = null, rssi = null;
-
-                                switch (packetType) {
-                                    case 0:
-                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
-                                        batt = reader.ReadByte();
-                                        batt_v = reader.ReadByte();
-                                        temp = reader.ReadByte();
-                                        brd_id = reader.ReadByte();
-                                        mcu_id = reader.ReadByte();
-                                        reader.BaseStream.Seek(packetStart + 10, SeekOrigin.Begin);
-                                        fw_date = reader.ReadByte() | (reader.ReadByte() << 8);
-                                        fw_major = reader.ReadByte();
-                                        fw_minor = reader.ReadByte();
-                                        fw_patch = reader.ReadByte();
-                                        rssi = reader.ReadByte();
-                                        break;
-
-                                    case 1:
-                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
-                                        for (int j = 0; j < 4; j++) q[j] = reader.ReadInt16();
-                                        for (int j = 0; j < 3; j++) a[j] = reader.ReadInt16();
-                                        break;
-
-                                    case 2:
-                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
-                                        batt = reader.ReadByte();
-                                        batt_v = reader.ReadByte();
-                                        temp = reader.ReadByte();
-                                        uint q_buf = reader.ReadUInt32();
-                                        q[0] = (int)(q_buf & 1023);
-                                        q[1] = (int)((q_buf >> 10) & 2047);
-                                        q[2] = (int)((q_buf >> 21) & 2047);
-                                        reader.BaseStream.Seek(packetStart + 9, SeekOrigin.Begin);
-                                        for (int j = 0; j < 3; j++) a[j] = reader.ReadInt16();
-                                        reader.BaseStream.Seek(packetStart + 15, SeekOrigin.Begin);
-                                        rssi = reader.ReadByte();
-                                        break;
-
-                                    case 3:
-                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
-                                        svr_status = reader.ReadByte();
-                                        reader.BaseStream.Seek(packetStart + 15, SeekOrigin.Begin);
-                                        rssi = reader.ReadByte();
-                                        break;
-
-                                    case 4:
-                                        reader.BaseStream.Seek(packetStart + 2, SeekOrigin.Begin);
-                                        for (int j = 0; j < 4; j++) q[j] = reader.ReadInt16();
-                                        for (int j = 0; j < 3; j++) m[j] = reader.ReadInt16();
-                                        break;
-                                }
-
-                                // Assign parsed data to tracker (same as your original logic)...
-                                // Note: Omitted here for brevity. Keep the existing assignment and quaternion logic.
-                            }
-                        }
-                    }
-
-                    if (!devicesPresent)
-                        Thread.Sleep(10);
-                    else if (!devicesDataReceived)
-                        Thread.Sleep(1);
-                }
-            }
-        }
         // Placeholder classes for integration:
         public class HIDDevice {
             public int Id;
@@ -651,7 +514,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                     while (device.FirmwareVersion == null) {
                         Thread.Sleep(1000);
                     }
-                    _udpHandler = new UDPHandler(device.FirmwareVersion + "_EspToLan", Encoding.UTF8.GetBytes(device.HardwareIdentifier), device.BoardType, ImuType, device.McuType, 1);
+                    _udpHandler = new UDPHandler(device.FirmwareVersion + "_EsbToLan", Encoding.UTF8.GetBytes(device.HardwareIdentifier), device.BoardType, ImuType, device.McuType, 1);
                     _ready = true;
                 });
             }
