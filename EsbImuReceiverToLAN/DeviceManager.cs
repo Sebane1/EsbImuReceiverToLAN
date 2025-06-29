@@ -1,4 +1,4 @@
-﻿using SlimeVR.Tracking.Trackers.HID;
+﻿using EsbImuReceiverToLan.Tracking.Trackers.HID;
 
 namespace EspImuReceiverToLAN {
     public class DeviceManager {

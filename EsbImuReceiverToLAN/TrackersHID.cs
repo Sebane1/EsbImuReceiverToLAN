@@ -1,23 +1,12 @@
-﻿// Basic namespaces
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
+﻿// Based on https://github.com/SlimeVR/SlimeVR-Server/blob/main/server/desktop/src/main/java/dev/slimevr/desktop/tracking/trackers/hid/TrackersHID.kt
 using HidSharp;
-using HidSharp.Reports;
-using System.IO;
 using System.Numerics;
 using static Everything_To_IMU_SlimeVR.SlimeVR.FirmwareConstants;
 using EspImuReceiverToLAN;
-using static SlimeVR.Tracking.Trackers.HID.TrackersHID;
 using Everything_To_IMU_SlimeVR.SlimeVR;
-using System.Collections;
 using System.Text;
-using System.Threading.Tasks;
-using Everything_To_IMU_SlimeVR.Utility;
 
-// Your namespace here
-namespace SlimeVR.Tracking.Trackers.HID {
+namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
     public class TrackersHID {
         private const int HID_TRACKER_RECEIVER_VID = 0x1209;
         private const int HID_TRACKER_RECEIVER_PID = 0x7690;
@@ -390,7 +379,7 @@ namespace SlimeVR.Tracking.Trackers.HID {
 
                             // Rotation and acceleration
                             if (packetType == 1 || packetType == 4) {
-                                // Convert Q15 short to float and reorder quaternion as w,x,y,z
+                                // Convert Q15 short to float and reorder quaternion as x,y,z,w
                                 var rot = new Quaternion(
                                     q[0] / 32768f,
                                     q[1] / 32768f,
@@ -398,8 +387,8 @@ namespace SlimeVR.Tracking.Trackers.HID {
                                     q[3] / 32768f
                                 );
 
-                                Quaternion scaledRot = Quaternion.Multiply(AXES_OFFSET, rot);
-                                tracker.SetRotation(scaledRot);
+                                rot = Quaternion.Multiply(AXES_OFFSET, rot);
+                                tracker.SetRotation(rot);
                             }
 
                             if (packetType == 2) {
@@ -425,8 +414,8 @@ namespace SlimeVR.Tracking.Trackers.HID {
                                     (float)Math.Cos(aAngle)
                                 );
 
-                                Quaternion scaledRot = Quaternion.Multiply(AXES_OFFSET, rot);
-                                tracker.SetRotation(scaledRot);
+                                rot = Quaternion.Multiply(AXES_OFFSET, rot);
+                                tracker.SetRotation(rot);
                             }
 
                             if (packetType == 1 || packetType == 2) {

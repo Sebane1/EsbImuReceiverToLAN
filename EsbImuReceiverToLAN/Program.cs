@@ -1,5 +1,5 @@
 ﻿using Everything_To_IMU_SlimeVR.Utility;
-using SlimeVR.Tracking.Trackers.HID;
+using EsbImuReceiverToLan.Tracking.Trackers.HID;
 
 namespace EspImuReceiverToLAN {
     internal class Program {
