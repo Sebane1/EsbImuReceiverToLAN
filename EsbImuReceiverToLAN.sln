@@ -1,9 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.13.35919.96 d17.13
+VisualStudioVersion = 17.13.35919.96
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EspImuReceiverToLAN", "EspImuReceiverToLAN\EspImuReceiverToLAN.csproj", "{370C11DA-E973-4053-AC14-0931149CD73B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EsbImuReceiverToLAN", "EsbImuReceiverToLAN\EsbImuReceiverToLAN.csproj", "{370C11DA-E973-4053-AC14-0931149CD73B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SlimeImuProtocol", "SlimeImuProtocol\SlimeImuProtocol.csproj", "{E4339CCE-C3F3-621A-0406-55396CAAC56D}"
 EndProject
