@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="EsbReceiverToLanAndroid.MainPage">
+    <VerticalStackLayout Padding="20">
+        <Label x:Name="titleLabel"
+               Text="ESB IMU Receiver to LAN"
+               FontSize="24"
+               HorizontalOptions="Center" />
+
+        <Entry x:Name="ipEntry"
+               Placeholder="Enter destination IP" />
+
+        <Button x:Name="startButton"
+                Text="Start Receiver"
+                Clicked="StartButton_Clicked" />
+
+        <Label x:Name="statusLabel"
+               TextColor="Red" />
+    </VerticalStackLayout>
+</ContentPage>

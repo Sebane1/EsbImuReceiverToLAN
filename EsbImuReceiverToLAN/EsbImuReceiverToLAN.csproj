@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PlatformTarget>x86</PlatformTarget>
-    <Version>0.0.0.3</Version>
+    <Version>0.0.0.4</Version>
   </PropertyGroup>
 
   <ItemGroup>
