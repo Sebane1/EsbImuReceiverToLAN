@@ -12,6 +12,7 @@ using Java.Lang;
 using Thread = System.Threading.Thread;
 using Math = System.Math;
 using Exception = System.Exception;
+using System.Threading;
 using Java.Nio;
 namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
     public class TrackersHID_Android {
@@ -143,27 +144,48 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
         }
 
         private void DataRead() {
+            UsbRequest request = new UsbRequest();
+            ByteBuffer buffer = ByteBuffer.Allocate(endpointIn.MaxPacketSize);
+
+            try {
+                request.Initialize(usbConnection, endpointIn);
+            } catch (Exception ex) {
+                Console.WriteLine($"[TrackersHID_Android] Failed to initialize UsbRequest: {ex.Message}");
+                return;
+            }
+
             while (true) {
                 try {
-                    UsbRequest request = new UsbRequest();
-                    request.Initialize(usbConnection, endpointIn);
-                    ByteBuffer buffer = ByteBuffer.Allocate(64);
+                    buffer.Clear(); // Prepare buffer for new data
+                    if (!request.Queue(buffer, endpointIn.MaxPacketSize)) {
+                        Console.WriteLine("[TrackersHID_Android] Failed to queue UsbRequest");
+                        Thread.Sleep(10);
+                        deviceOpened = false;
+                        continue;
+                    }
 
-                    request.Queue(buffer, 64);
-                    if (usbConnection.RequestWait() == request) {
-                        UsbRequest completed = usbConnection.RequestWait();
-                        if (completed != null && completed.Equals(request)) {
-                            byte[] data = new byte[64];
-                            buffer.Rewind(); // Ensure position is at start
-                            buffer.Get(data, 0, data.Length);
-                            ParsePacket(data, data.Length);
-                            // Now you can use 'data'
-                        } else {
-                            Thread.Sleep(5);
-                        }
+                    UsbRequest completed = usbConnection.RequestWait();
+                    if (completed == null) {
+                        Console.WriteLine("[TrackersHID_Android] RequestWait returned null, device may have disconnected");
+                        deviceOpened = false;
+                        break;
+                    }
+
+                    if (completed.Equals(request)) {
+                        buffer.Rewind(); // Set position to 0 to read from buffer start
+
+                        int len = buffer.Limit();
+                        byte[] data = new byte[len];
+                        buffer.Get(data, 0, len);
+
+                        ParsePacket(data, len);
+                    } else {
+                        Thread.Sleep(5);
                     }
                 } catch (Exception ex) {
                     Console.WriteLine($"[TrackersHID_Android] Read error: {ex.Message}");
+                    deviceOpened = false;
+                    Thread.Sleep(10);
                 }
             }
         }
