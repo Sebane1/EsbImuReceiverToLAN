@@ -121,13 +121,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                 var endpoint = usbInterface.GetEndpoint(i);
                 if (endpoint.Direction == UsbAddressing.In) {
                     endpointIn = endpoint;
-                    byte[] buffer = new byte[endpointIn.MaxPacketSize];  // safer to match endpoint's max packet size
-                    int len = usbConnection.BulkTransfer(endpointIn, buffer, buffer.Length, 1000);
-                    Console.WriteLine($"Trying endpoint {i}, read length: {len}");
-                    if (len > 0) {
-                        Console.WriteLine($"Success reading from endpoint {i}");
-                        break;
-                    }
                 }
             }
 
@@ -144,23 +137,29 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
         }
 
         private void DataRead() {
+
+            ByteBuffer buffer = ByteBuffer.AllocateDirect(64);
             UsbRequest request = new UsbRequest();
-            ByteBuffer buffer = ByteBuffer.Allocate(endpointIn.MaxPacketSize);
-
-            try {
-                request.Initialize(usbConnection, endpointIn);
-            } catch (Exception ex) {
-                Console.WriteLine($"[TrackersHID_Android] Failed to initialize UsbRequest: {ex.Message}");
-                return;
-            }
-
+            // HID Get Report request, often used to get first packet or trigger stream
+            byte requestType = 0xA1; // Device-to-host | Class | Interface
+            byte report = 0x01;     // GET_REPORT
+            short value = 0x0100;    // Report Type (Input), Report ID (0)
+            short index = 0;         // Interface number
+            byte[] reportBuffer = new byte[64];
+            int received = usbConnection.ControlTransfer(UsbAddressing.In, report, value, index, reportBuffer, reportBuffer.Length, 1000);
             while (true) {
                 try {
                     buffer.Clear(); // Prepare buffer for new data
-                    if (!request.Queue(buffer, endpointIn.MaxPacketSize)) {
+                    try {
+                        request.Initialize(usbConnection, endpointIn);
+                    } catch (Exception ex) {
+                        Console.WriteLine($"[TrackersHID_Android] Failed to initialize UsbRequest: {ex.Message}");
+                        return;
+                    }
+
+                    if (!request.Queue(buffer, 64)) {
                         Console.WriteLine("[TrackersHID_Android] Failed to queue UsbRequest");
                         Thread.Sleep(10);
-                        deviceOpened = false;
                         continue;
                     }
 
@@ -186,6 +185,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                     Console.WriteLine($"[TrackersHID_Android] Read error: {ex.Message}");
                     deviceOpened = false;
                     Thread.Sleep(10);
+                    break;
                 }
             }
         }
