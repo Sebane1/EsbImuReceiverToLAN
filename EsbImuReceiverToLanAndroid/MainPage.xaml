@@ -14,8 +14,12 @@
         <Button x:Name="startButton"
                 Text="Start Receiver"
                 Clicked="StartButton_Clicked" />
-
         <Label x:Name="statusLabel"
                TextColor="Red" />
+
+        <Button x:Name="refreshButton"
+                Text="Refresh Trackers"
+                Clicked="RefreshButton_Clicked" />
+
     </VerticalStackLayout>
 </ContentPage>

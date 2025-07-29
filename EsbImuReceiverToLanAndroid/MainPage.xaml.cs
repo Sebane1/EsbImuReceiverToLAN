@@ -42,7 +42,10 @@ public partial class MainPage : ContentPage {
         }
     }
 
-    
+    private void RefreshButton_Clicked(object sender, EventArgs e) {
+        UDPHandler.ForceUDPClientsToDoHandshake();
+    }
+
     // Method to get the local IP address of the device
     private string GetLocalIPAddress() {
         string ipAddress = "Unable to retrieve IP";
@@ -135,6 +138,9 @@ public partial class MainPage : ContentPage {
         startButton = new Button { Text = "Start Receiver" };
         startButton.Clicked += StartButton_Clicked;
 
+        refreshButton = new Button { Text = "Refresh Trackers" };
+        refreshButton.Clicked += RefreshButton_Clicked;
+
         Content = new VerticalStackLayout {
             Padding = 20,
             Children =
@@ -142,6 +148,7 @@ public partial class MainPage : ContentPage {
                 new Label { Text = "ESB IMU Receiver to LAN", FontSize = 24, HorizontalOptions = LayoutOptions.Center },
                 ipEntry,
                 startButton,
+                refreshButton,
                 statusLabel
             }
         };
