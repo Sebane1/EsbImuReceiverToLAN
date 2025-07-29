@@ -1,6 +1,6 @@
-﻿using Everything_To_IMU_SlimeVR.Utility;
+﻿using SlimeImuProtocol.Utility;
 using EsbImuReceiverToLan.Tracking.Trackers.HID;
-using Everything_To_IMU_SlimeVR.SlimeVR;
+using SlimeImuProtocol.SlimeVR;
 using System.Net;
 
 namespace EspImuReceiverToLAN {

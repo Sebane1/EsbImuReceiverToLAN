@@ -8,7 +8,7 @@ using Android.Util;
 using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using EsbImuReceiverToLan.Tracking.Trackers.HID;
-using Everything_To_IMU_SlimeVR.SlimeVR;
+using SlimeImuProtocol.SlimeVR;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;

@@ -1,11 +1,12 @@
 ﻿// Based on https://github.com/SlimeVR/SlimeVR-Server/blob/main/server/desktop/src/main/java/dev/slimevr/desktop/tracking/trackers/hid/TrackersHID.kt
 using HidSharp;
 using System.Numerics;
-using static Everything_To_IMU_SlimeVR.SlimeVR.FirmwareConstants;
+using static SlimeImuProtocol.SlimeVR.FirmwareConstants;
 using EspImuReceiverToLAN;
-using Everything_To_IMU_SlimeVR.SlimeVR;
+using SlimeImuProtocol.SlimeVR;
 using System.Text;
-using Everything_To_IMU_SlimeVR.Utility;
+using SlimeImuProtocol.Utility;
+using SlimeImuProtocol;
 
 namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
     public class TrackersHID {
@@ -13,7 +14,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
         private const int HID_TRACKER_RECEIVER_PID = 0x7690;
         private const int PACKET_SIZE = 16;
 
-        private readonly List<HIDDevice> devices = new();
+        private readonly List<TrackerDevice> devices = new();
         private readonly Dictionary<string, List<int>> devicesBySerial = new();
         private readonly Dictionary<HidDevice, List<int>> devicesByHID = new();
         private readonly Dictionary<HidDevice, int> lastDataByHID = new();
@@ -88,23 +89,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
             }
         }
 
-        private void RemoveDevice(HidDevice device) {
-            if (devicesByHID.TryGetValue(device, out var ids)) {
-                lock (devices) {
-                    foreach (int id in ids) {
-                        var dev = devices[id];
-                        foreach (var tracker in dev.Trackers.Values) {
-                            if (tracker.Status == TrackerStatus.OK) {
-                                tracker.Status = TrackerStatus.Disconnected;
-                            }
-                        }
-                    }
-                }
-                devicesByHID.Remove(device);
-                Console.WriteLine($"[TrackerServer] Linked HID device removed: {device.GetSerialNumber()}");
-            }
-        }
-
         private void DeviceEnumerateLoop() {
             Thread.Sleep(100); // Delayed start
             while (true) {
@@ -136,8 +120,23 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                 }
             }
         }
-
-        private void SetUpSensor(HIDDevice device, int trackerId, ImuType sensorType, TrackerStatus sensorStatus, MagnetometerStatus magStatus) {
+        private void RemoveDevice(HidDevice device) {
+            if (devicesByHID.TryGetValue(device, out var ids)) {
+                lock (devices) {
+                    foreach (int id in ids) {
+                        var dev = devices[id];
+                        foreach (var tracker in dev.Trackers.Values) {
+                            if (tracker.Status == TrackerStatus.OK) {
+                                tracker.Status = TrackerStatus.Disconnected;
+                            }
+                        }
+                    }
+                }
+                devicesByHID.Remove(device);
+                Console.WriteLine($"[TrackerServer] Linked HID device removed: {device.GetSerialNumber()}");
+            }
+        }
+        private void SetUpSensor(TrackerDevice device, int trackerId, ImuType sensorType, TrackerStatus sensorStatus, MagnetometerStatus magStatus) {
             if (!device.Trackers.TryGetValue(trackerId, out Tracker imuTracker)) {
                 string formattedHWID = device.HardwareIdentifier.Replace(":", "").Length > 5
                     ? device.HardwareIdentifier.Replace(":", "").Substring(device.HardwareIdentifier.Replace(":", "").Length - 5)
@@ -166,7 +165,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                 imuTracker.Status = sensorStatus;
             }
         }
-        private HIDDevice DeviceIdLookup(HidDevice hidDevice, int deviceId, string deviceName, List<int> deviceList) {
+        private TrackerDevice DeviceIdLookup(HidDevice hidDevice, int deviceId, string deviceName, List<int> deviceList) {
             lock (devices) {
                 // Try to find existing device by hidId in the deviceList
                 foreach (var index in deviceList) {
@@ -182,7 +181,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                 }
 
                 // Create and register a new HIDDevice
-                var device = new HIDDevice(deviceId) {
+                var device = new TrackerDevice(deviceId) {
                     Name = deviceName,
                     Manufacturer = "HID Device",
                     HardwareIdentifier = deviceName
@@ -451,23 +450,5 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
         }
 
         // Placeholder classes for integration:
-        public class HIDDevice {
-            public int Id;
-            public string Name;
-            public string Manufacturer;
-            public string HardwareIdentifier;
-            public Dictionary<int, Tracker> Trackers = new();
-            public HIDDevice(int id) { Id = id; }
-
-            public BoardType BoardType { get; internal set; }
-            public McuType McuType { get; internal set; }
-            public string FirmwareVersion { get; internal set; }
-            public Tracker? GetTracker(int id) {
-                if (Trackers.TryGetValue(id, out var tracker)) {
-                    return tracker;
-                }
-                return null;
-            }
-        }
     }
 }

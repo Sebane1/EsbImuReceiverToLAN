@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using EsbReceiverToLanAndroid.Platforms.Android.Services;
-using Everything_To_IMU_SlimeVR.SlimeVR;
+using SlimeImuProtocol.SlimeVR;
 
 namespace EsbReceiverToLanAndroid;
 
