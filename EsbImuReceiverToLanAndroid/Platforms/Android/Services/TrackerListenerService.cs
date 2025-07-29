@@ -20,7 +20,7 @@ namespace EsbReceiverToLanAndroid.Platforms.Android.Services;
 [Preserve(AllMembers = true)]
 [Service(ForegroundServiceType = ForegroundService.TypeDataSync, Exported = true)]
 public class TrackerListenerService : Service {
-    private bool _running = false;
+    private static bool _running = false;
     private Thread _thread;
     private static TrackerListenerService _instance;
 
@@ -49,6 +49,10 @@ public class TrackerListenerService : Service {
         _running = true;
         _thread = new Thread(HIDTrackerReader);
         _thread.Start();
+    }
+    public void StopTrackerWork() {
+        _trackersHid.StopReading();
+        _running = false;
     }
 
 
@@ -108,6 +112,13 @@ public class TrackerListenerService : Service {
     }
 
     public override StartCommandResult OnStartCommand(Intent intent, StartCommandFlags flags, int startId) {
+
+        if (intent?.Action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_REMOVED") {
+            StopTrackerWork();
+            StopSelf();
+            return StartCommandResult.NotSticky;
+        }
+
         StartTrackerWork();
         return StartCommandResult.Sticky;  // Keeps service running
     }

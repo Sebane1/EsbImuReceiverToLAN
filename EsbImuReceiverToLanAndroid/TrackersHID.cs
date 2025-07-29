@@ -39,6 +39,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
         private UsbInterface usbInterfaceIn;
         bool deviceOpened = false;
         bool alreadyRunning = false;
+        bool disposed = false;
         public TrackersHID_Android() {
             if (!alreadyRunning) {
                 alreadyRunning = true;
@@ -56,7 +57,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
         }
         private void DeviceEnumerateLoop() {
             Thread.Sleep(100); // Delayed start
-            while (true) {
+            while (!deviceOpened) {
                 Thread.Sleep(1000);
                 EnumerateDevices();
             }
@@ -203,7 +204,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
             }
         }
         private void DataRead() {
-            while (true) {
+            while (deviceOpened) {
                 try {
                     Thread.Sleep(1);
                     int[] q = new int[4];
@@ -221,9 +222,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
                             byte[] dataReceived = new byte[64]; // 1 byte report ID + 64 bytes payload
                             try {
                                 int result = usbConnection.BulkTransfer(endpointIn, dataReceived, dataReceived.Length, 500);
-                                if (result > 0) {
-
-                                }
                             } catch (Exception ex) {
                                 Console.WriteLine($"[TrackersHID_Android] Read error: {ex.Message}");
                                 deviceOpened = false;
@@ -455,6 +453,21 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
             }
         }
 
+        internal void StopReading() {
+            disposed = true;
+            deviceOpened = false;
+            try {
+                dataReadThread?.Interrupt();
+                dataReadThread = null;
+                usbConnection?.ReleaseInterface(usbInterfaceIn);
+                usbConnection?.Close();
+                usbConnection = null;
+                usbInterfaceIn = null;
+                endpointIn = null;
+            } catch (Exception ex) {
+                Console.WriteLine($"[Service] Cleanup error: {ex.Message}");
+            }
+        }
 
         private class UsbPermissionReceiver : BroadcastReceiver {
             private readonly Action<UsbDevice> onGranted;
