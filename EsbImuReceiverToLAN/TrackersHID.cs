@@ -31,6 +31,8 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
         public TrackersHID() {
             hidLoader = new HidDeviceLoader();
 
+
+
             dataReadThread = new Thread(DataRead) {
                 IsBackground = true,
                 Name = "hidsharp data reader"
@@ -429,6 +431,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID {
 
                                 if (packetType == 4) {
                                     Vector3 magnetometer = new Vector3(m[0], m[1], m[2]) * (1000f / 1024f);
+                                    device.MagnetometerStatus = MagnetometerStatus.ENABLED;
                                     tracker.SetMagVector(magnetometer);
                                 }
 

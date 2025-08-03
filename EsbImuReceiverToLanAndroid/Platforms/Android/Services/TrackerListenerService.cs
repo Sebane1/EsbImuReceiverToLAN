@@ -51,12 +51,28 @@ public class TrackerListenerService : Service {
         _thread.Start();
     }
     public void StopTrackerWork() {
-        _trackersHid.StopReading();
+        Log.Info("TrackerListenerService", "Stopping tracker work...");
+
+        _trackersHid?.StopReading();
+        _trackersHid = null;
+
+        if (_thread != null && _thread.IsAlive) {
+            try {
+                _thread?.Interrupt(); // Soft cancel
+            } catch (ThreadInterruptedException) {
+                Log.Warn("TrackerListenerService", "Thread interrupted during shutdown.");
+            }
+        }
+        _thread = null;
         _running = false;
     }
 
 
+
     private void HIDTrackerReader() {
+        if(_trackersHid != null) {
+            _trackersHid?.StopReading();
+        }
         _trackersHid = new TrackersHID_Android();
     }
 
@@ -74,8 +90,9 @@ public class TrackerListenerService : Service {
     public override IBinder OnBind(Intent intent) => null;
 
     public override void OnDestroy() {
-        _running = false;
-        _thread?.Join();
+        Log.Info("TrackerListenerService", "Service Destroyed");
+        StopTrackerWork();
+        UDPHandler.ForceDestroy();
         base.OnDestroy();
     }
 
@@ -112,14 +129,17 @@ public class TrackerListenerService : Service {
     }
 
     public override StartCommandResult OnStartCommand(Intent intent, StartCommandFlags flags, int startId) {
+        string action = intent?.Action;
 
-        if (intent?.Action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_REMOVED") {
-            StopTrackerWork();
-            StopSelf();
+        if (action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_REMOVED") {
+            Console.WriteLine("[TrackerListenerService] USB device detached — cleaning up.");
+            StopTrackerWork(); // Your method to stop threads, close USB, etc.
+            StopSelf();     // Stop the service cleanly
             return StartCommandResult.NotSticky;
         }
 
-        StartTrackerWork();
-        return StartCommandResult.Sticky;  // Keeps service running
+        Console.WriteLine("[TrackerListenerService] Service starting or USB device attached.");
+        //StartTrackerWork(); // Your method that connects, claims interfaces, etc.
+        return StartCommandResult.Sticky;
     }
 }

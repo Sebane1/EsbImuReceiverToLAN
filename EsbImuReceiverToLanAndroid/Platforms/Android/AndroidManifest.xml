@@ -19,8 +19,8 @@
     android:exported="true">
 <intent-filter>
   <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+  <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
   <category android:name="android.intent.category.DEFAULT" />
-  <data android:scheme="usb" />
 </intent-filter>
 </receiver>
 	</application>
