@@ -11,6 +11,16 @@
         <Entry x:Name="ipEntry"
                Placeholder="Enter destination IP" />
 
+        <Label x:Name="rateLabel"
+       Text="Packet interval: 16 ms (~60 Hz)"
+       Margin="0,10,0,0" />
+
+        <Slider x:Name="rateSlider"
+        Minimum="0"
+        Maximum="64"
+        Value="16"
+        ValueChanged="RateSlider_ValueChanged" />
+
         <Button x:Name="startButton"
                 Text="Start Receiver"
                 Clicked="StartButton_Clicked" />

@@ -5,3 +5,6 @@ EspImuReceiverToLAN/obj
 EspImuReceiverToLAN/bin
 EsbImuReceiverToLanAndroid/bin/Debug
 EsbImuReceiverToLanAndroid/obj
+EsbImuReceiverToLanAndroid/bin/Release
+*.keystore
+keytool
