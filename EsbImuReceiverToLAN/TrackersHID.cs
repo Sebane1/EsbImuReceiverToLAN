@@ -494,7 +494,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                 {
                                     float scaleAccel = 1f / (1 << 7);
                                     Vector3 acceleration = new Vector3(a[0], a[1], a[2]) * scaleAccel;
-                                    tracker.SetAcceleration(Unsandwich(tracker.CurrentRotation, acceleration));
+                                    tracker.SetAcceleration(Unsandwich(acceleration));
                                 }
 
                                 if (packetType == 4)
@@ -523,10 +523,16 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 }
             }
         }
-        public static Vector3 Unsandwich(Quaternion q, Vector3 v)
+        public static Vector3 Unsandwich(Vector3 v)
         {
+            Quaternion sensorOffsetCorrectionInv =
+                Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI * 0.5f);
+
             Quaternion vQuat = new Quaternion(v, 0f);
-            Quaternion result = Quaternion.Inverse(q) * vQuat * q;
+
+            Quaternion result =
+                sensorOffsetCorrectionInv * vQuat * Quaternion.Inverse(sensorOffsetCorrectionInv);
+
             return new Vector3(result.X, result.Y, result.Z);
         }
     }

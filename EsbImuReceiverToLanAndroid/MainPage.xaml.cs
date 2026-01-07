@@ -1,6 +1,7 @@
 using Android.Content;
 using EsbReceiverToLanAndroid.Platforms.Android.Services;
 using Google.Android.Material.Slider;
+using SlimeImuProtocol;
 using SlimeImuProtocol.SlimeVR;
 using System.Net;
 using Slider = Microsoft.Maui.Controls.Slider;
@@ -101,18 +102,18 @@ public partial class MainPage : ContentPage
         statusLabel = new Label { Text = "", TextColor = Colors.Red };
         startButton = new Button { Text = "Start Receiver" };
         startButton.Clicked += StartButton_Clicked;
-        rateLabel = new Label
-        {
-            Text = "Packet Rate Limit: 16 ms (~60 Hz)"
-        };
+        //rateLabel = new Label
+        //{
+        //    Text = "Packet Rate Limit: 16 ms (~60 Hz)"
+        //};
 
-        rateSlider = new Slider
-        {
-            Minimum = 0,
-            Maximum = 64,
-            Value = 16
-        };
-        rateSlider.ValueChanged += RateSlider_ValueChanged;
+        //rateSlider = new Slider
+        //{
+        //    Minimum = 0,
+        //    Maximum = 4000,
+        //    Value = 0
+        //};
+        //rateSlider.ValueChanged += RateSlider_ValueChanged;
         refreshButton = new Button { Text = "Refresh Trackers" };
         refreshButton.Clicked += RefreshButton_Clicked;
 
@@ -134,17 +135,17 @@ public partial class MainPage : ContentPage
 
     private void RateSlider_ValueChanged(object? sender, ValueChangedEventArgs e)
     {
-        int ms = (int)Math.Round(e.NewValue);
+        int packetsAllowedPerSecond = (int)Math.Round(e.NewValue);
 
-        UDPHandler.QuaternionDataRateLimitInMilliseconds = ms;
+        FunctionSequenceManager.PacketsAllowedPerSecond = packetsAllowedPerSecond;
 
-        rateLabel.Text = ms == 0
-            ? "Packet Rate Limit: 0 ms (uncapped)"
-            : $"Packet Rate Limit: {ms} ms (~{1000 / ms} Hz)";
+        rateLabel.Text = packetsAllowedPerSecond == 0
+            ? "Packets Per Second Limit: No Limit"
+            : $"Packets Per Second Limit: {packetsAllowedPerSecond}";
 
         File.WriteAllText(
             Path.Combine(FileSystem.AppDataDirectory, "rate.txt"),
-            ms.ToString()
+            packetsAllowedPerSecond.ToString()
         );
     }
 
@@ -155,10 +156,10 @@ public partial class MainPage : ContentPage
             ipEntry.Text = File.ReadAllText(configPath);
 
         string ratePath = Path.Combine(FileSystem.AppDataDirectory, "rate.txt");
-        if (File.Exists(ratePath) && int.TryParse(File.ReadAllText(ratePath), out int ms))
+        if (File.Exists(ratePath) && int.TryParse(File.ReadAllText(ratePath), out int packetsAllowedPerSecond))
         {
-            rateSlider.Value = ms;
-            UDPHandler.QuaternionDataRateLimitInMilliseconds = ms;
+            rateSlider.Value = packetsAllowedPerSecond;
+            FunctionSequenceManager.PacketsAllowedPerSecond = packetsAllowedPerSecond;
         }
     }
 }
