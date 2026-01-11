@@ -246,7 +246,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
             {
                 try
                 {
-                    Thread.Sleep(1);
                     int[] q = new int[4];
                     int[] a = new int[3];
                     int[] m = new int[3];
@@ -471,20 +470,16 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                             q[3] / 32768f
                                         );
 
-                                        Task.Run(() => tracker.SetRotation(rot));
+                                        tracker.SetRotation(rot);
                                     }
 
                                     if (packetType == 2)
                                     {
                                         // Run this on a seperate thread in case its blocking?
-                                        var localQuaternion = q;
-                                        Task.Run(() =>
-                                        {
-                                            var threadCopyOfQuaternion = localQuaternion;
                                             float[] v = new float[3];
-                                            v[0] = threadCopyOfQuaternion[0] / 1024f;
-                                            v[1] = threadCopyOfQuaternion[1] / 2048f;
-                                            v[2] = threadCopyOfQuaternion[2] / 2048f;
+                                            v[0] = q[0] / 1024f;
+                                            v[1] = q[1] / 2048f;
+                                            v[2] = q[2] / 2048f;
 
                                             for (int x = 0; x < 3; x++)
                                             {
@@ -504,21 +499,20 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                                 (float)Math.Cos(aAngle)
                                             );
                                             tracker.SetRotation(rot);
-                                        });
                                     }
 
                                     if (packetType == 1 || packetType == 2)
                                     {
                                         float scaleAccel = 1f / (1 << 7);
                                         Vector3 acceleration = new Vector3(a[0], a[1], a[2]) * scaleAccel;
-                                        Task.Run(() => tracker.SetAcceleration(Unsandwich(acceleration)));
+                                        tracker.SetAcceleration(Unsandwich(acceleration));
                                     }
 
                                     if (packetType == 4)
                                     {
                                         Vector3 magnetometer = new Vector3(m[0], m[1], m[2]) * (1000f / 1024f);
                                         device.MagnetometerStatus = MagnetometerStatus.ENABLED;
-                                        Task.Run(() => tracker.SetMagVector(magnetometer));
+                                        tracker.SetMagVector(magnetometer);
                                     }
 
                                     if (packetType == 1 || packetType == 2 || packetType == 4)
