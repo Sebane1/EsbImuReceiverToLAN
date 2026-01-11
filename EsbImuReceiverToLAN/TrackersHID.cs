@@ -472,29 +472,32 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
                                 if (packetType == 2)
                                 {
-                                    float[] v = new float[3];
-                                    v[0] = q[0] / 1024f;
-                                    v[1] = q[1] / 2048f;
-                                    v[2] = q[2] / 2048f;
-
-                                    for (int x = 0; x < 3; x++)
+                                    Task.Run(() =>
                                     {
-                                        v[x] = v[x] * 2 - 1;
-                                    }
+                                        float[] v = new float[3];
+                                        v[0] = q[0] / 1024f;
+                                        v[1] = q[1] / 2048f;
+                                        v[2] = q[2] / 2048f;
 
-                                    float d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-                                    float invSqrtD = 1.0f / (float)Math.Sqrt(d + 1e-6f);
-                                    float aAngle = (float)(Math.PI / 2) * d * invSqrtD;
-                                    float s = (float)Math.Sin(aAngle);
-                                    float k = s * invSqrtD;
+                                        for (int x = 0; x < 3; x++)
+                                        {
+                                            v[x] = v[x] * 2 - 1;
+                                        }
 
-                                    var rot = new Quaternion(
-                                        k * v[0],
-                                        k * v[1],
-                                        k * v[2],
-                                        (float)Math.Cos(aAngle)
-                                    );
-                                    Task.Run(() => tracker.SetRotation(rot));
+                                        float d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+                                        float invSqrtD = 1.0f / (float)Math.Sqrt(d + 1e-6f);
+                                        float aAngle = (float)(Math.PI / 2) * d * invSqrtD;
+                                        float s = (float)Math.Sin(aAngle);
+                                        float k = s * invSqrtD;
+
+                                        var rot = new Quaternion(
+                                            k * v[0],
+                                            k * v[1],
+                                            k * v[2],
+                                            (float)Math.Cos(aAngle)
+                                        );
+                                        tracker.SetRotation(rot);
+                                    });
                                 }
 
                                 if (packetType == 1 || packetType == 2)
