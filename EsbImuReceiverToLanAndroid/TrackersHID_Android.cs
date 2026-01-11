@@ -455,7 +455,9 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
                                     // RSSI / Signal strength
                                     if (rssi != null)
+                                    {
                                         tracker.SignalStrength = -rssi.Value;
+                                    }
 
                                     // Rotation and acceleration
                                     if (packetType == 1 || packetType == 4)
