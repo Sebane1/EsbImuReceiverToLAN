@@ -409,14 +409,18 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                     }
                                     // Temperature
                                     if (temp != null)
+                                    {
                                         tracker.Temperature = (temp > 0) ? (temp.Value / 2f - 39f) : (float?)null;
+                                    }
 
                                     // Board Type
                                     if (brd_id != null)
                                     {
                                         var boardType = (BoardType)brd_id.Value;
                                         if (boardType != null)
+                                        {
                                             device.BoardType = boardType;
+                                        }
                                     }
 
                                     // MCU Type
@@ -424,7 +428,9 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                     {
                                         var mcuType = (McuType)mcu_id.Value;
                                         if (mcuType != null)
+                                        {
                                             device.McuType = mcuType;
+                                        }
                                     }
 
                                     // Firmware version string
@@ -462,8 +468,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                             q[3] / 32768f
                                         );
 
-                                        // rot = Quaternion.Multiply(AXES_OFFSET, rot);
-                                        tracker.SetRotation(rot);
+                                        Task.Run(() => tracker.SetRotation(rot));
                                     }
 
                                     if (packetType == 2)
@@ -491,22 +496,21 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                             (float)Math.Cos(aAngle)
                                         );
 
-                                        // rot = Quaternion.Multiply(AXES_OFFSET, rot);
-                                        tracker.SetRotation(rot);
+                                        Task.Run(() => tracker.SetRotation(rot));
                                     }
 
                                     if (packetType == 1 || packetType == 2)
                                     {
                                         float scaleAccel = 1f / (1 << 7);
                                         Vector3 acceleration = new Vector3(a[0], a[1], a[2]) * scaleAccel;
-                                        tracker.SetAcceleration(Unsandwich(acceleration));
+                                        Task.Run(() => tracker.SetAcceleration(Unsandwich(acceleration)));
                                     }
 
                                     if (packetType == 4)
                                     {
                                         Vector3 magnetometer = new Vector3(m[0], m[1], m[2]) * (1000f / 1024f);
                                         device.MagnetometerStatus = MagnetometerStatus.ENABLED;
-                                        tracker.SetMagVector(magnetometer);
+                                        Task.Run(() => tracker.SetMagVector(magnetometer));
                                     }
 
                                     if (packetType == 1 || packetType == 2 || packetType == 4)

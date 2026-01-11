@@ -18,11 +18,11 @@ namespace EsbReceiverToLanAndroid {
         public static EventHandler OnDeviceDisconnected;
         Intent serviceIntent = null;
         public override void OnReceive(Context context, Intent intent) {
-
             string action = intent.Action;
 
             if (UsbManager.ActionUsbDeviceAttached.Equals(action)) {
-                if (!justConnected) {
+                if (!justConnected)
+                {
                     OnDeviceConnected?.Invoke(this, EventArgs.Empty);
                     justConnected = true;
                     justDisconnected = false;
@@ -30,9 +30,13 @@ namespace EsbReceiverToLanAndroid {
                     serviceIntent.SetPackage(context.PackageName);
 
                     if (AOS.Build.VERSION.SdkInt >= AOS.BuildVersionCodes.O)
+                    {
                         context.StartForegroundService(serviceIntent);
+                    }
                     else
+                    {
                         context.StartService(serviceIntent);
+                    }
                 }
             } else if (UsbManager.ActionUsbDeviceDetached.Equals(action)) {
                 if (!justDisconnected) {
@@ -41,8 +45,6 @@ namespace EsbReceiverToLanAndroid {
                     justDisconnected = true;
                     UsbDevice device = (UsbDevice)intent.GetParcelableExtra(UsbManager.ExtraDevice);
 
-                    // Let your service know to stop or clean up this specific device
-                    //stopIntent.SetAction("com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_REMOVED");
                     TrackerListenerService.Instance?.StopTrackerWork();
                     TrackerListenerService.Instance?.StopSelf();
                     if (serviceIntent != null) {
