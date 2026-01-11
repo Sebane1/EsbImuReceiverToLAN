@@ -16,6 +16,7 @@ using System.Threading;
 using Java.Nio;
 using static EsbImuReceiverToLan.Tracking.Trackers.HID.TrackersHID_Android;
 using SlimeImuProtocol;
+using SlimeImuProtocol.SlimeVR;
 namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 {
     public class TrackersHID_Android : IDisposable
@@ -475,12 +476,15 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
                                     if (packetType == 2)
                                     {
+                                        // Run this on a seperate thread in case its blocking?
+                                        var localQuaternion = q;
                                         Task.Run(() =>
                                         {
+                                            var threadCopyOfQuaternion = localQuaternion;
                                             float[] v = new float[3];
-                                            v[0] = q[0] / 1024f;
-                                            v[1] = q[1] / 2048f;
-                                            v[2] = q[2] / 2048f;
+                                            v[0] = threadCopyOfQuaternion[0] / 1024f;
+                                            v[1] = threadCopyOfQuaternion[1] / 2048f;
+                                            v[2] = threadCopyOfQuaternion[2] / 2048f;
 
                                             for (int x = 0; x < 3; x++)
                                             {
@@ -525,9 +529,13 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                             }
 
                             if (!devicesPresent)
+                            {
                                 Thread.Sleep(10);
+                            }
                             else if (!devicesDataReceived)
+                            {
                                 Thread.Sleep(1);
+                            }
                         }
                     }
                 }
