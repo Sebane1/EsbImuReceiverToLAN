@@ -516,15 +516,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                 }
                             }
                         }
-
-                        /*if (!devicesPresent)
-                        {
-                            Thread.Sleep(10);
-                        }
-                        else if (!devicesDataReceived)
-                        {
-                            Thread.Sleep(1);
-                        }*/
                     }
                 }
                 catch (Exception e)
