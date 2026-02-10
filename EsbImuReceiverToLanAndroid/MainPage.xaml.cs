@@ -112,7 +112,6 @@ public partial class MainPage : ContentPage
             {
                 new Label { Text = "ESB IMU Receiver to LAN", FontSize = 24, HorizontalOptions = LayoutOptions.Center },
                 ipEntry,
-                rateLabel,
                 startButton,
                 refreshButton,
                 statusLabel

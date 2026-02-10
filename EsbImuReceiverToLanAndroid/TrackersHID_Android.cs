@@ -30,10 +30,9 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         private readonly Dictionary<string, List<int>> devicesByHID = new();
         private readonly Dictionary<string, int> lastDataByHID = new();
         private readonly Dictionary<string, UsbDeviceContext> openDevices = new();
+        private readonly Dictionary<string, Thread> deviceReadThreads = new();
 
         private UsbManager usbManager;
-
-        private static Thread dataReadThread;
 
         public event EventHandler<Tracker> trackersConsumer;
         private Quaternion AXES_OFFSET;
@@ -193,14 +192,12 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
             Console.WriteLine($"[TrackersHID_Android] Opened USB dongle: {deviceKey} (total: {openDevices.Count})");
 
-            lock (openDevices)
+            var readThread = new Thread(() => DeviceReadLoop(deviceKey)) { IsBackground = true };
+            lock (deviceReadThreads)
             {
-                if (dataReadThread == null || !dataReadThread.IsAlive)
-                {
-                    dataReadThread = new Thread(DataRead) { IsBackground = true };
-                    dataReadThread.Start();
-                }
+                deviceReadThreads[deviceKey] = readThread;
             }
+            readThread.Start();
         }
 
         private void SetUpSensor(TrackerDevice device, int trackerId, ImuType sensorType, TrackerStatus sensorStatus, MagnetometerStatus magStatus)
@@ -275,66 +272,50 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 return device;
             }
         }
-        private void DataRead()
+        private void DeviceReadLoop(string deviceKey)
         {
+            int[] q = new int[4];
+            int[] a = new int[3];
+            int[] m = new int[3];
+
             while (!disposed)
             {
                 try
                 {
-                    int[] q = new int[4];
-                    int[] a = new int[3];
-                    int[] m = new int[3];
-
-                    List<string> deviceKeys;
+                    UsbDeviceContext ctx;
+                    List<int> deviceList;
                     lock (openDevices)
                     {
-                        if (openDevices.Count == 0)
-                        {
-                            Thread.Sleep(100);
-                            continue;
-                        }
-                        deviceKeys = new List<string>(openDevices.Keys);
+                        if (!openDevices.TryGetValue(deviceKey, out ctx) || !devicesByHID.TryGetValue(deviceKey, out deviceList))
+                            break;
                     }
 
-                    foreach (var deviceKey in deviceKeys)
+                    byte[] dataReceived = new byte[64];
+                    int bytesRead;
+                    try
                     {
-                        if (disposed) break;
+                        bytesRead = ctx.Connection.BulkTransfer(ctx.EndpointIn, dataReceived, dataReceived.Length, 20);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[TrackersHID_Android] Read error for {deviceKey}: {ex.Message}");
+                        RemoveDevice(deviceKey);
+                        break;
+                    }
+                    if (bytesRead <= 0)
+                        continue;
 
-                        UsbDeviceContext ctx;
-                        List<int> deviceList;
-                        lock (openDevices)
-                        {
-                            if (!openDevices.TryGetValue(deviceKey, out ctx) || !devicesByHID.TryGetValue(deviceKey, out deviceList))
-                                continue;
-                        }
+                    if (bytesRead % PACKET_SIZE != 0)
+                        continue;
 
-                        byte[] dataReceived = new byte[64];
-                        int bytesRead;
-                        try
-                        {
-                            bytesRead = ctx.Connection.BulkTransfer(ctx.EndpointIn, dataReceived, dataReceived.Length, 500);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[TrackersHID_Android] Read error for {deviceKey}: {ex.Message}");
-                            RemoveDevice(deviceKey);
-                            Thread.Sleep(10);
-                            continue;
-                        }
-                        if (bytesRead <= 0)
-                            continue;
+                    lock (devicesByHID)
+                    {
+                        lastDataByHID[deviceKey] = 0;
+                    }
 
-                        if (bytesRead % PACKET_SIZE != 0)
-                            continue;
+                    int packetCount = bytesRead / PACKET_SIZE;
 
-                        lock (devicesByHID)
-                        {
-                            lastDataByHID[deviceKey] = 0;
-                        }
-
-                                int packetCount = bytesRead / PACKET_SIZE;
-
-                                for (int i = 0; i < packetCount * PACKET_SIZE; i += PACKET_SIZE)
+                    for (int i = 0; i < packetCount * PACKET_SIZE; i += PACKET_SIZE)
                                 {
                                     int packetType = dataReceived[i];
                                     int id = dataReceived[i + 1];
@@ -563,7 +544,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                         tracker.DataTick();
                                     }
                                 }
-                    }
                 }
                 catch (Exception e)
                 {
@@ -593,6 +573,14 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
         public void RemoveDevice(string deviceKey)
         {
+            Thread? readThread = null;
+            lock (deviceReadThreads)
+            {
+                deviceReadThreads.TryGetValue(deviceKey, out readThread);
+                deviceReadThreads.Remove(deviceKey);
+            }
+            try { readThread?.Interrupt(); } catch { }
+
             lock (openDevices)
             {
                 if (!openDevices.TryGetValue(deviceKey, out var ctx))
@@ -638,8 +626,12 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
             disposed = true;
             try
             {
-                dataReadThread?.Interrupt();
-                dataReadThread = null;
+                lock (deviceReadThreads)
+                {
+                    foreach (var t in deviceReadThreads.Values)
+                        t?.Interrupt();
+                    deviceReadThreads.Clear();
+                }
 
                 lock (openDevices)
                 {
