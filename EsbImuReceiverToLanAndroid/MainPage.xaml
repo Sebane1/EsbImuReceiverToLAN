@@ -1,35 +1,48 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             x:Class="EsbReceiverToLanAndroid.MainPage">
-    <VerticalStackLayout Padding="20">
-        <Label x:Name="titleLabel"
-               Text="ESB IMU Receiver to LAN"
-               FontSize="24"
-               HorizontalOptions="Center" />
+             xmlns:views="clr-namespace:EsbReceiverToLanAndroid.Views"
+             x:Class="EsbReceiverToLanAndroid.MainPage"
+             Title="ESB IMU Receiver"
+             BackgroundColor="{StaticResource Gray950}">
 
-        <Entry x:Name="ipEntry"
-               Placeholder="Enter destination IP" />
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="16">
+            <!-- Header -->
+            <Label x:Name="titleLabel" Text="ESB IMU Receiver" FontSize="28" FontAttributes="Bold"
+                   TextColor="{StaticResource Gray100}" HorizontalOptions="Center" />
+            <Label x:Name="subtitleLabel" Text="Tracker data to LAN" FontSize="14"
+                   TextColor="{StaticResource Gray400}" HorizontalOptions="Center" />
 
-        <Label x:Name="rateLabel"
-       Text="Packet interval: 16 ms (~60 Hz)"
-       Margin="0,10,0,0" />
+            <!-- Connection -->
+            <Frame BackgroundColor="{StaticResource Gray900}" BorderColor="{StaticResource Gray600}"
+                   Padding="16" CornerRadius="8">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Connection" FontAttributes="Bold" TextColor="{StaticResource Gray200}" />
+                    <Entry x:Name="ipEntry" Placeholder="Destination IP address"
+                           PlaceholderColor="{StaticResource Gray500}" TextColor="{StaticResource Gray100}"
+                           BackgroundColor="{StaticResource Gray950}" />
+                    <HorizontalStackLayout Spacing="8">
+                        <Button x:Name="startButton" Text="Start" Clicked="StartButton_Clicked"
+                                BackgroundColor="{StaticResource Primary}" TextColor="White"
+                                HorizontalOptions="FillAndExpand" />
+                        <Button x:Name="refreshButton" Text="Refresh" Clicked="RefreshButton_Clicked"
+                                BackgroundColor="{StaticResource Gray600}" TextColor="{StaticResource Gray200}"
+                                HorizontalOptions="FillAndExpand" />
+                    </HorizontalStackLayout>
+                    <Label x:Name="statusLabel" Text="" TextColor="{StaticResource Gray400}" />
+                </VerticalStackLayout>
+            </Frame>
 
-        <Slider x:Name="rateSlider"
-        Minimum="0"
-        Maximum="64"
-        Value="16"
-        ValueChanged="RateSlider_ValueChanged" />
-
-        <Button x:Name="startButton"
-                Text="Start Receiver"
-                Clicked="StartButton_Clicked" />
-        <Label x:Name="statusLabel"
-               TextColor="Red" />
-
-        <Button x:Name="refreshButton"
-                Text="Refresh Trackers"
-                Clicked="RefreshButton_Clicked" />
-
-    </VerticalStackLayout>
+            <!-- Trackers -->
+            <Frame BackgroundColor="{StaticResource Gray900}" BorderColor="{StaticResource Gray600}"
+                   Padding="16" CornerRadius="8">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Connected Trackers" FontAttributes="Bold" TextColor="{StaticResource Gray200}" />
+                    <Label x:Name="trackerSummaryLabel" Text="No trackers" TextColor="{StaticResource Gray500}" FontSize="12" />
+                    <VerticalStackLayout x:Name="trackerListContainer" Spacing="0" />
+                </VerticalStackLayout>
+            </Frame>
+        </VerticalStackLayout>
+    </ScrollView>
 </ContentPage>

@@ -18,6 +18,7 @@ using static EsbImuReceiverToLan.Tracking.Trackers.HID.TrackersHID_Android;
 using SlimeImuProtocol;
 using SlimeImuProtocol.SlimeVR;
 using SlimeImuProtocol.SlimeProtocol;
+using EsbReceiverToLanAndroid.Models;
 namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 {
     public class TrackersHID_Android : IDisposable
@@ -569,6 +570,49 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         public int OpenDeviceCount
         {
             get { lock (openDevices) return openDevices.Count; }
+        }
+
+        public TrackerSnapshot? GetTrackerSnapshot()
+        {
+            if (disposed) return null;
+            var snapshot = new TrackerSnapshot();
+            lock (openDevices)
+            lock (devicesByHID)
+            lock (devices)
+            {
+                foreach (var kvp in devicesByHID)
+                {
+                    var deviceKey = kvp.Key;
+                    var deviceIndices = kvp.Value;
+                    var shortName = deviceKey.Length > 12 ? "..." + deviceKey.Substring(Math.Max(0, deviceKey.Length - 9)) : deviceKey;
+                    var group = new DongleGroup { DeviceKey = deviceKey, DisplayName = $"Dongle {shortName}" };
+                    foreach (var idx in deviceIndices)
+                    {
+                        if (idx >= devices.Count) continue;
+                        var dev = devices[idx];
+                        foreach (var kv in dev.Trackers)
+                        {
+                            var t = kv.Value;
+                            if (t == null) continue;
+                            group.Trackers.Add(new TrackerInfo
+                            {
+                                Id = t.TrackerNum,
+                                Name = t.Name ?? "",
+                                DisplayName = t.DisplayName ?? $"Tracker {t.TrackerNum}",
+                                BatteryLevel = t.BatteryLevel,
+                                BatteryVoltage = t.BatteryVoltage,
+                                Temperature = t.Temperature,
+                                SignalStrength = t.SignalStrength,
+                                Status = t.Status.ToString(),
+                                Rotation = t.CurrentRotation
+                            });
+                        }
+                    }
+                    if (group.Trackers.Count > 0)
+                        snapshot.Dongles.Add(group);
+                }
+            }
+            return snapshot;
         }
 
         public void RemoveDevice(string deviceKey)

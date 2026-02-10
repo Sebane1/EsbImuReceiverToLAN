@@ -10,6 +10,7 @@ using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using EsbImuReceiverToLan.Tracking.Trackers.HID;
 using EsbReceiverToLanAndroid;
+using EsbReceiverToLanAndroid.Models;
 using SlimeImuProtocol.SlimeVR;
 using System.Net;
 using System.Net.Sockets;
@@ -82,6 +83,8 @@ public class TrackerListenerService : Service {
             _instance._pendingUsbDevice = null;
         _trackersHid = new TrackersHID_Android(deviceFromIntent);
     }
+
+    public TrackerSnapshot? GetTrackerSnapshot() => _trackersHid?.GetTrackerSnapshot();
 
     public void Vibrate() {
         var vibrator = (Vibrator)GetSystemService(VibratorService);
