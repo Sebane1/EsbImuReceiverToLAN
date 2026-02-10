@@ -2,12 +2,14 @@ using Android;
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
+using Android.Hardware.Usb;
 using Android.OS;
 using Android.Runtime;
 using Android.Util;
 using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using EsbImuReceiverToLan.Tracking.Trackers.HID;
+using EsbReceiverToLanAndroid;
 using SlimeImuProtocol.SlimeVR;
 using System.Net;
 using System.Net.Sockets;
@@ -23,6 +25,7 @@ public class TrackerListenerService : Service {
     private static bool _running = false;
     private Thread _thread;
     private static TrackerListenerService _instance;
+    private UsbDevice? _pendingUsbDevice;
 
     public static TrackerListenerService Instance { get => _instance; set => _instance = value; }
     TrackersHID_Android _trackersHid;
@@ -73,7 +76,11 @@ public class TrackerListenerService : Service {
         if(_trackersHid != null) {
             _trackersHid?.StopReading();
         }
-        _trackersHid = new TrackersHID_Android();
+        Thread.Sleep(300);
+        var deviceFromIntent = _instance?._pendingUsbDevice;
+        if (_instance != null)
+            _instance._pendingUsbDevice = null;
+        _trackersHid = new TrackersHID_Android(deviceFromIntent);
     }
 
     public void Vibrate() {
@@ -131,15 +138,34 @@ public class TrackerListenerService : Service {
     public override StartCommandResult OnStartCommand(Intent intent, StartCommandFlags flags, int startId) {
         string action = intent?.Action;
 
-        if (action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_REMOVED") {
-            Console.WriteLine("[TrackerListenerService] USB device detached — cleaning up.");
-            StopTrackerWork(); // Your method to stop threads, close USB, etc.
-            StopSelf();     // Stop the service cleanly
+        if (action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_DEVICE_ATTACHED") {
+            var device = intent?.GetParcelableExtra(UsbManager.ExtraDevice) as UsbDevice;
+            if (device != null && device.VendorId == 0x1209 && device.ProductId == 0x7690) {
+                if (_trackersHid != null) {
+                    _trackersHid.TryOpenDeviceFromIntent(device);
+                } else {
+                    _pendingUsbDevice = device;
+                }
+            }
+            return StartCommandResult.Sticky;
+        }
+
+        if (action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_DEVICE_DETACHED") {
+            var device = intent?.GetParcelableExtra(UsbManager.ExtraDevice) as UsbDevice;
+            if (device != null) {
+                string deviceKey = device.DeviceName ?? device.DeviceId.ToString();
+                _trackersHid?.RemoveDevice(deviceKey);
+                Log.Info("TrackerListenerService", $"USB device detached: {deviceKey}");
+                if (_trackersHid?.OpenDeviceCount == 0) {
+                    SendBroadcast(new Intent(TrackerUsbReceiver.ActionLastDeviceDetached).SetPackage(PackageName));
+                    StopTrackerWork();
+                    StopSelf();
+                    return StartCommandResult.NotSticky;
+                }
+            }
             return StartCommandResult.NotSticky;
         }
 
-        Console.WriteLine("[TrackerListenerService] Service starting or USB device attached.");
-        //StartTrackerWork(); // Your method that connects, claims interfaces, etc.
         return StartCommandResult.Sticky;
     }
 }

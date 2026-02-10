@@ -1,4 +1,4 @@
-﻿// TrackersHID_Android.cs
+// TrackersHID_Android.cs
 using Android.App;
 using Android.Content;
 using Android.Hardware.Usb;
@@ -17,6 +17,7 @@ using Java.Nio;
 using static EsbImuReceiverToLan.Tracking.Trackers.HID.TrackersHID_Android;
 using SlimeImuProtocol;
 using SlimeImuProtocol.SlimeVR;
+using SlimeImuProtocol.SlimeProtocol;
 namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 {
     public class TrackersHID_Android : IDisposable
@@ -26,12 +27,11 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         private const int PACKET_SIZE = 16;
         private readonly List<TrackerDevice> devices = new();
         private readonly Dictionary<string, List<int>> devicesBySerial = new();
-        private readonly Dictionary<UsbEndpoint, List<int>> devicesByHID = new();
-        private readonly Dictionary<UsbEndpoint, int> lastDataByHID = new();
+        private readonly Dictionary<string, List<int>> devicesByHID = new();
+        private readonly Dictionary<string, int> lastDataByHID = new();
+        private readonly Dictionary<string, UsbDeviceContext> openDevices = new();
 
         private UsbManager usbManager;
-        private UsbDeviceConnection usbConnection;
-        private UsbEndpoint endpointIn;
 
         private static Thread dataReadThread;
 
@@ -39,26 +39,44 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         private Quaternion AXES_OFFSET;
 
         private readonly Dictionary<int, Tracker> activeTrackers = new();
-        private UsbInterface usbInterfaceIn;
-        bool deviceOpened = false;
         bool alreadyRunning = false;
         bool disposed = false;
 
         private UsbPermissionReceiver usbPermissionReceiver;
-        private FunctionSequenceManager _functionSequenceManager;
-        public TrackersHID_Android()
+
+        private class UsbDeviceContext
+        {
+            public UsbDevice Device;
+            public UsbDeviceConnection Connection;
+            public UsbInterface Interface;
+            public UsbEndpoint EndpointIn;
+            public string DeviceKey => Device?.DeviceName ?? "";
+        }
+        public TrackersHID_Android(UsbDevice? deviceFromIntent = null)
         {
             if (!alreadyRunning)
             {
                 alreadyRunning = true;
                 usbManager = (UsbManager)Application.Context.GetSystemService(Context.UsbService);
                 SetupAxesOffset();
-                _functionSequenceManager = new FunctionSequenceManager();
+                if (deviceFromIntent != null && deviceFromIntent.VendorId == HID_TRACKER_RECEIVER_VID && deviceFromIntent.ProductId == HID_TRACKER_RECEIVER_PID)
+                {
+                    if (usbManager.HasPermission(deviceFromIntent))
+                        OpenDevice(deviceFromIntent);
+                }
                 Task.Run(() =>
                 {
                     DeviceEnumerateLoop();
                 });
             }
+        }
+
+        public void TryOpenDeviceFromIntent(UsbDevice device)
+        {
+            if (device == null || disposed) return;
+            if (device.VendorId != HID_TRACKER_RECEIVER_VID || device.ProductId != HID_TRACKER_RECEIVER_PID) return;
+            if (!usbManager.HasPermission(device)) return;
+            OpenDevice(device);
         }
 
         private void SetupAxesOffset()
@@ -69,7 +87,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         private void DeviceEnumerateLoop()
         {
             Thread.Sleep(100); // Delayed start
-            while (!deviceOpened)
+            while (!disposed)
             {
                 Thread.Sleep(1000);
                 EnumerateDevices();
@@ -79,18 +97,23 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         {
             foreach (var entry in usbManager.DeviceList)
             {
+                if (disposed) return;
                 var device = entry.Value;
-                if (device.VendorId == HID_TRACKER_RECEIVER_VID && device.ProductId == HID_TRACKER_RECEIVER_PID)
+                if (device.VendorId != HID_TRACKER_RECEIVER_VID || device.ProductId != HID_TRACKER_RECEIVER_PID)
+                    continue;
+
+                string deviceKey = device.DeviceName ?? device.DeviceId.ToString();
+                lock (openDevices)
                 {
-                    if (!deviceOpened)
+                    if (openDevices.ContainsKey(deviceKey))
+                        continue; // Already opened
+
+                    if (!usbManager.HasPermission(device))
                     {
-                        if (!usbManager.HasPermission(device))
-                        {
-                            RequestPermission(device);
-                            return;
-                        }
-                        OpenDevice(device);
+                        RequestPermission(device);
+                        return; // Only request one at a time
                     }
+                    OpenDevice(device);
                 }
             }
         }
@@ -131,39 +154,52 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
         private void OpenDevice(UsbDevice device)
         {
-            if (!deviceOpened)
+            string deviceKey = device.DeviceName ?? device.DeviceId.ToString();
+            lock (openDevices)
             {
-                var connection = usbManager.OpenDevice(device);
-                if (connection == null)
-                {
-                    Console.WriteLine("[TrackersHID_Android] Failed to open USB device.");
+                if (openDevices.ContainsKey(deviceKey))
                     return;
-                }
-                usbConnection = connection;
-                UsbInterface usbInterface = device.GetInterface(2);
-                UsbEndpoint ep = usbInterface.GetEndpoint(0);
-                //if (ep.Type == UsbAddressing.XferBulk && ep.Direction == UsbAddressing.In) {
-                endpointIn = ep;
+            }
 
-                // Claim the interface AFTER we’ve found a valid endpoint
-                bool claimed = connection.ClaimInterface(usbInterface, true);
-                if (!claimed)
-                {
-                    Console.WriteLine("[TrackersHID_Android] Failed to claim interface.");
-                    return;
-                }
-
-                if (!devicesByHID.ContainsKey(endpointIn))
-                {
-                    devicesByHID[endpointIn] = new List<int>();
-                }
-                // Start the read thread once the endpoint is set and claimed
-                usbInterfaceIn = usbInterface; // Save this if you want to release later
-                deviceOpened = true;
-                dataReadThread = new Thread(DataRead) { IsBackground = true };
-                dataReadThread.Start();
+            var connection = usbManager.OpenDevice(device);
+            if (connection == null)
+            {
+                Console.WriteLine($"[TrackersHID_Android] Failed to open USB device {deviceKey}.");
                 return;
-                //}
+            }
+            UsbInterface usbInterface = device.GetInterface(2);
+            UsbEndpoint ep = usbInterface.GetEndpoint(0);
+            bool claimed = connection.ClaimInterface(usbInterface, true);
+            if (!claimed)
+            {
+                Console.WriteLine($"[TrackersHID_Android] Failed to claim interface for {deviceKey}.");
+                connection.Close();
+                return;
+            }
+
+            var ctx = new UsbDeviceContext
+            {
+                Device = device,
+                Connection = connection,
+                Interface = usbInterface,
+                EndpointIn = ep
+            };
+
+            lock (openDevices)
+            {
+                openDevices[deviceKey] = ctx;
+                devicesByHID[deviceKey] = new List<int>();
+            }
+
+            Console.WriteLine($"[TrackersHID_Android] Opened USB dongle: {deviceKey} (total: {openDevices.Count})");
+
+            lock (openDevices)
+            {
+                if (dataReadThread == null || !dataReadThread.IsAlive)
+                {
+                    dataReadThread = new Thread(DataRead) { IsBackground = true };
+                    dataReadThread.Start();
+                }
             }
         }
 
@@ -187,8 +223,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     true,
                     true,
                     false,
-                    magStatus,
-                    _functionSequenceManager);
+                    magStatus);
 
                 device.Trackers[trackerId] = imuTracker;
 
@@ -201,7 +236,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 imuTracker.Status = sensorStatus;
             }
         }
-        private TrackerDevice DeviceIdLookup(UsbEndpoint hidDevice, int deviceId, string deviceName, List<int> deviceList)
+        private TrackerDevice DeviceIdLookup(string deviceKey, int deviceId, string deviceName, List<int> deviceList)
         {
             lock (devices)
             {
@@ -235,14 +270,14 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 // Example: You might have a VRServer instance managing devices
                 DeviceManager.Instance.AddDevice(device);
 
-                Console.WriteLine($"[TrackerServer] Added device {deviceName} for {hidDevice.Address}, id {deviceId}");
+                Console.WriteLine($"[TrackerServer] Added device {deviceName} for {deviceKey}, id {deviceId}");
 
                 return device;
             }
         }
         private void DataRead()
         {
-            while (deviceOpened && !disposed)
+            while (!disposed)
             {
                 try
                 {
@@ -250,46 +285,54 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     int[] a = new int[3];
                     int[] m = new int[3];
 
-                    lock (devicesByHID)
+                    List<string> deviceKeys;
+                    lock (openDevices)
                     {
-                        bool devicesPresent = false;
-                        bool devicesDataReceived = false;
-
-                        foreach (var kvp in devicesByHID)
+                        if (openDevices.Count == 0)
                         {
-                            if (!disposed)
-                            {
-                                var hidDevice = kvp.Key;
-                                List<int> deviceList = kvp.Value;
+                            Thread.Sleep(100);
+                            continue;
+                        }
+                        deviceKeys = new List<string>(openDevices.Keys);
+                    }
 
-                                byte[] dataReceived = new byte[64]; // 1 byte report ID + 64 bytes payload
-                                try
-                                {
-                                    int result = usbConnection.BulkTransfer(endpointIn, dataReceived, dataReceived.Length, 500);
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"[TrackersHID_Android] Read error: {ex.Message}");
-                                    deviceOpened = false;
-                                    Thread.Sleep(10);
-                                    break;
-                                }
-                                if (dataReceived.Length == 0)
-                                {
-                                    continue;
-                                }
-                                devicesPresent = true;
+                    foreach (var deviceKey in deviceKeys)
+                    {
+                        if (disposed) break;
 
-                                if (dataReceived.Length % PACKET_SIZE != 0)
-                                {
-                                    Console.WriteLine("[TrackerServer] Malformed HID packet, ignoring");
-                                    continue;
-                                }
+                        UsbDeviceContext ctx;
+                        List<int> deviceList;
+                        lock (openDevices)
+                        {
+                            if (!openDevices.TryGetValue(deviceKey, out ctx) || !devicesByHID.TryGetValue(deviceKey, out deviceList))
+                                continue;
+                        }
 
-                                devicesDataReceived = true;
-                                lastDataByHID[hidDevice] = 0;
+                        byte[] dataReceived = new byte[64];
+                        int bytesRead;
+                        try
+                        {
+                            bytesRead = ctx.Connection.BulkTransfer(ctx.EndpointIn, dataReceived, dataReceived.Length, 500);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[TrackersHID_Android] Read error for {deviceKey}: {ex.Message}");
+                            RemoveDevice(deviceKey);
+                            Thread.Sleep(10);
+                            continue;
+                        }
+                        if (bytesRead <= 0)
+                            continue;
 
-                                int packetCount = dataReceived.Length / PACKET_SIZE;
+                        if (bytesRead % PACKET_SIZE != 0)
+                            continue;
+
+                        lock (devicesByHID)
+                        {
+                            lastDataByHID[deviceKey] = 0;
+                        }
+
+                                int packetCount = bytesRead / PACKET_SIZE;
 
                                 for (int i = 0; i < packetCount * PACKET_SIZE; i += PACKET_SIZE)
                                 {
@@ -304,11 +347,11 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                         Array.Copy(dataReceived, i + 2, data, 0, 8);
                                         ulong addr = BitConverter.ToUInt64(data, 0) & 0xFFFFFFFFFFFF;
                                         string deviceName = addr.ToString("X12");
-                                        DeviceIdLookup(hidDevice, deviceId, deviceName, deviceList);
+                                        DeviceIdLookup(deviceKey, deviceId, deviceName, deviceList);
                                         continue;
                                     }
 
-                                    var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
+                                    var device = DeviceIdLookup(deviceKey, deviceId, null, deviceList);
                                     if (device == null)
                                     {
                                         continue;
@@ -520,8 +563,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                         tracker.DataTick();
                                     }
                                 }
-                            }
-                        }
                     }
                 }
                 catch (Exception e)
@@ -545,20 +586,77 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         }
 
 
+        public int OpenDeviceCount
+        {
+            get { lock (openDevices) return openDevices.Count; }
+        }
+
+        public void RemoveDevice(string deviceKey)
+        {
+            lock (openDevices)
+            {
+                if (!openDevices.TryGetValue(deviceKey, out var ctx))
+                    return;
+
+                try
+                {
+                    ctx.Connection?.ReleaseInterface(ctx.Interface);
+                    ctx.Connection?.Close();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[TrackersHID_Android] Error closing device {deviceKey}: {ex.Message}");
+                }
+
+                openDevices.Remove(deviceKey);
+                if (devicesByHID.TryGetValue(deviceKey, out var deviceList))
+                {
+                    lock (devices)
+                    {
+                        foreach (var index in deviceList)
+                        {
+                            if (index < devices.Count)
+                            {
+                                var dev = devices[index];
+                                foreach (var tracker in dev.Trackers.Values)
+                                {
+                                    if (tracker?.Status == TrackerStatus.OK)
+                                        tracker.Status = TrackerStatus.Disconnected;
+                                }
+                            }
+                        }
+                    }
+                    devicesByHID.Remove(deviceKey);
+                }
+                lastDataByHID.Remove(deviceKey);
+                Console.WriteLine($"[TrackersHID_Android] Removed USB dongle: {deviceKey} (remaining: {openDevices.Count})");
+            }
+        }
+
         internal void StopReading()
         {
             disposed = true;
-            deviceOpened = false;
             try
             {
                 dataReadThread?.Interrupt();
                 dataReadThread = null;
-                usbConnection?.ReleaseInterface(usbInterfaceIn);
-                usbConnection?.Close();
-                usbConnection = null;
-                usbInterfaceIn = null;
-                endpointIn = null;
+
+                lock (openDevices)
+                {
+                    var toClose = new List<UsbDeviceContext>(openDevices.Values);
+                    openDevices.Clear();
+                    foreach (var ctx in toClose)
+                    {
+                        try
+                        {
+                            ctx.Connection?.ReleaseInterface(ctx.Interface);
+                            ctx.Connection?.Close();
+                        }
+                        catch { }
+                    }
+                }
                 devicesByHID?.Clear();
+                lastDataByHID?.Clear();
                 foreach (var device in devices)
                 {
                     foreach (var tracker in device.Trackers)

@@ -1,4 +1,4 @@
-﻿// Based on https://github.com/SlimeVR/SlimeVR-Server/blob/main/server/desktop/src/main/java/dev/slimevr/desktop/tracking/trackers/hid/TrackersHID.kt
+// Based on https://github.com/SlimeVR/SlimeVR-Server/blob/main/server/desktop/src/main/java/dev/slimevr/desktop/tracking/trackers/hid/TrackersHID.kt
 using HidSharp;
 using System.Numerics;
 using static SlimeImuProtocol.SlimeVR.FirmwareConstants;
@@ -186,8 +186,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     true,
                     true,
                     false,
-                    magStatus,
-                    _functionSequenceManager);
+                    magStatus);
 
                 device.Trackers[trackerId] = imuTracker;
 

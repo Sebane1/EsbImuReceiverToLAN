@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           xmlns:tools="http://schemas.android.com/tools"
           package="com.SebaneStudios.EsbReceiverToLanAndroid">
@@ -24,6 +24,9 @@
   <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
   <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
   <category android:name="android.intent.category.DEFAULT" />
+</intent-filter>
+<intent-filter>
+  <action android:name="com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_LAST_DEVICE_DETACHED" />
 </intent-filter>
 </receiver>
 	</application>

@@ -102,18 +102,6 @@ public partial class MainPage : ContentPage
         statusLabel = new Label { Text = "", TextColor = Colors.Red };
         startButton = new Button { Text = "Start Receiver" };
         startButton.Clicked += StartButton_Clicked;
-        //rateLabel = new Label
-        //{
-        //    Text = "Packet Rate Limit: 16 ms (~60 Hz)"
-        //};
-
-        //rateSlider = new Slider
-        //{
-        //    Minimum = 0,
-        //    Maximum = 4000,
-        //    Value = 0
-        //};
-        //rateSlider.ValueChanged += RateSlider_ValueChanged;
         refreshButton = new Button { Text = "Refresh Trackers" };
         refreshButton.Clicked += RefreshButton_Clicked;
 
@@ -125,28 +113,11 @@ public partial class MainPage : ContentPage
                 new Label { Text = "ESB IMU Receiver to LAN", FontSize = 24, HorizontalOptions = LayoutOptions.Center },
                 ipEntry,
                 rateLabel,
-                rateSlider,
                 startButton,
                 refreshButton,
                 statusLabel
             }
         };
-    }
-
-    private void RateSlider_ValueChanged(object? sender, ValueChangedEventArgs e)
-    {
-        int packetsAllowedPerSecond = (int)Math.Round(e.NewValue);
-
-        FunctionSequenceManager.PacketsAllowedPerSecond = packetsAllowedPerSecond;
-
-        rateLabel.Text = packetsAllowedPerSecond == 0
-            ? "Packets Per Second Limit: No Limit"
-            : $"Packets Per Second Limit: {packetsAllowedPerSecond}";
-
-        File.WriteAllText(
-            Path.Combine(FileSystem.AppDataDirectory, "rate.txt"),
-            packetsAllowedPerSecond.ToString()
-        );
     }
 
     private void LoadConfig()
@@ -159,7 +130,6 @@ public partial class MainPage : ContentPage
         if (File.Exists(ratePath) && int.TryParse(File.ReadAllText(ratePath), out int packetsAllowedPerSecond))
         {
             rateSlider.Value = packetsAllowedPerSecond;
-            FunctionSequenceManager.PacketsAllowedPerSecond = packetsAllowedPerSecond;
         }
     }
 }
