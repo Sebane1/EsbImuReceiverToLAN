@@ -604,7 +604,8 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                 Temperature = t.Temperature,
                                 SignalStrength = t.SignalStrength,
                                 Status = t.Status.ToString(),
-                                Rotation = t.CurrentRotation
+                                Rotation = t.CurrentRotation,
+                                Acceleration = t.CurrentAcceleration
                             });
                         }
                     }

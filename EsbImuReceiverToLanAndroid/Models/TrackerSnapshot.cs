@@ -25,4 +25,5 @@ public class TrackerInfo
     public int SignalStrength { get; set; }
     public string Status { get; set; } = "";
     public Quaternion Rotation { get; set; }
+    public Vector3 Acceleration { get; set; }
 }

@@ -5,6 +5,7 @@ using EsbReceiverToLanAndroid.Platforms.Android.Services;
 using EsbReceiverToLanAndroid.Views;
 using SlimeImuProtocol.SlimeVR;
 using System.Net;
+using System.Numerics;
 
 namespace EsbReceiverToLanAndroid;
 
@@ -14,7 +15,9 @@ public partial class MainPage : ContentPage
     private Intent? intent;
     private IDispatcherTimer? _refreshTimer;
     private string _lastTopologySignature = "";
-    private readonly List<(TrackerRotationView RotView, Label NameLabel, Label InfoLabel)> _trackerRowCache = new();
+    private readonly List<(TrackerRotationView RotView, Label NameLabel, Label InfoLabel, Grid Row)> _trackerRowCache = new();
+    private readonly Dictionary<string, Vector3> _previousAcceleration = new();
+    private const float AccelDeltaThreshold = 1f; // Accelerometer change (m/s² scale) to count as moving
 
     public MainPage()
     {
@@ -77,6 +80,7 @@ public partial class MainPage : ContentPage
             {
                 _lastTopologySignature = "";
                 _trackerRowCache.Clear();
+                _previousAcceleration.Clear();
                 trackerListContainer.Children.Clear();
             }
             trackerSummaryLabel.Text = "No trackers connected";
@@ -94,17 +98,27 @@ public partial class MainPage : ContentPage
         if (signature != _lastTopologySignature)
         {
             _lastTopologySignature = signature;
+            _previousAcceleration.Clear();
             RebuildTrackerList(snapshot, orderedTrackers);
         }
         else
         {
             for (int i = 0; i < orderedTrackers.Count && i < _trackerRowCache.Count; i++)
             {
-                var (_, t) = orderedTrackers[i];
-                var (rotView, nameLabel, infoLabel) = _trackerRowCache[i];
+                var (dongle, t) = orderedTrackers[i];
+                var (rotView, nameLabel, infoLabel, row) = _trackerRowCache[i];
                 rotView.TrackerRotation = t.Rotation;
                 nameLabel.Text = t.DisplayName;
                 infoLabel.Text = $"{t.BatteryLevel:F0}% • {t.Status}";
+
+                var key = i.ToString(); // Use index - unique per row, avoids ID collision between trackers
+                var accel = t.Acceleration;
+                var moving = false;
+                if (_previousAcceleration.TryGetValue(key, out var prev))
+                    moving = (accel - prev).Length() > AccelDeltaThreshold;
+                _previousAcceleration[key] = accel;
+
+                row.BackgroundColor = moving ? Color.FromArgb("#254ade80") : Colors.Transparent; // subtle green tint when moving
             }
         }
     }
@@ -170,7 +184,7 @@ public partial class MainPage : ContentPage
                 row.Add(rotView, 0, 0);
                 row.Add(rightStack, 1, 0);
                 trackerListContainer.Children.Add(row);
-                _trackerRowCache.Add((rotView, nameLabel, infoLabel));
+                _trackerRowCache.Add((rotView, nameLabel, infoLabel, row));
             }
         }
     }
