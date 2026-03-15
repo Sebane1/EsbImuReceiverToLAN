@@ -11,6 +11,7 @@ struct VirtualTracker {
     bool isInitialized = false;
     uint32_t lastHeartbeatTime = 0;
     uint32_t lastHandshakeTime = 0;
+    uint32_t lastPacketReceivedTime = 0;
     uint32_t lastSendDataTime = 0;
     uint32_t lastBatterySendTime = 0;
     uint32_t lastErrMemTime = 0;

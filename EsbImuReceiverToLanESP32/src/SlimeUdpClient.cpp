@@ -35,6 +35,7 @@ void SlimeUdpClient::onWiFiConnect() {
     // Dynamic Port Randomization: Use random ephemeral ports to bypass "stuck" server states.
     if (_trackers[i].active && i < 11) {
       _trackers[i].lastSendDataTime = 0;
+      _trackers[i].lastPacketReceivedTime = millis();
       _trackers[i].lastBatterySendTime = 0;
       _trackers[i].lastErrMemTime = 0;
       _trackers[i].handshakeRetryCount = 0;
@@ -118,6 +119,14 @@ void SlimeUdpClient::loop() {
       }
     }
 
+    if (vt.isInitialized && (millis() - vt.lastPacketReceivedTime > 4000)) {
+        DEBUG_PRINTF("Connection TIMEOUT for Tracker %d - Re-verifying server\n", i);
+        vt.isInitialized = false;
+        vt.handshakeOngoing = true;
+        vt.handshakeRetryCount = 0;
+        vt.lastHandshakeTime = 0;
+    }
+
     if (millis() - vt.lastHeartbeatTime > 900) {
       if (isNetworkReady(i)) {
           vt.lastHeartbeatTime = millis();
@@ -145,21 +154,49 @@ void SlimeUdpClient::loop() {
               DEBUG_PRINTF("Got %d bytes from %s:%d on Tracker %d\n", len, vt.udp.remoteIP().toString().c_str(), vt.udp.remotePort(), i);
           }
           
+          vt.lastPacketReceivedTime = millis();
+
+          // Packet structure:
+          // [0-3] Packet Type (int32 BIG ENDIAN) - except handshake which is [0]
+          // [4-11] Packet Number (int64 BIG ENDIAN)
+          
+          uint32_t packetType = 0;
+          if (len >= 4) {
+             packetType = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
+          }
+
+          // Case: PingPong (10) - Echo back to server
+          if (packetType == 10) {
+              vt.udp.beginPacket(vt.udp.remoteIP(), vt.udp.remotePort());
+              vt.udp.write(buffer, len);
+              vt.udp.endPacket();
+              continue;
+          }
+
+          // Case: Heartbeat (1) - Reply with type 0
+          if (packetType == 1) {
+              sendHeartbeat(i);
+              continue;
+          }
+
           // For Handshakes, SlimeVR server responds with "Hey OVR =D 5"
           // Use raw memory search instead of String to avoid strlen() crash in ROM
           const char* needle = "Hey OVR =D 5";
           int needleLen = 12;
           bool found = false;
-          for (int j = 0; j <= len - needleLen; j++) {
-            if (memcmp(buffer + j, needle, needleLen) == 0) {
-              found = true;
-              break;
-            }
+          if (buffer[0] == 3) { // Handshake type
+              for (int j = 0; j <= len - needleLen; j++) {
+                if (memcmp(buffer + j, needle, needleLen) == 0) {
+                  found = true;
+                  break;
+                }
+              }
           }
           if (found) {
              if (vt.handshakeOngoing) {
                 vt.handshakeOngoing = false;
                 vt.isInitialized = true;
+                vt.lastPacketReceivedTime = millis();
                 DEBUG_PRINTF("Handshake SUCCESS for Tracker %d - Sending confirmation\n", i);
                 sendHandshake(i, vt.firmware); // Second handshake as required
                 addTracker(i, vt.imuType, vt.firmware);
