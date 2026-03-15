@@ -4,6 +4,18 @@
 #include "config.h"
 #include "UsbHidHandler.h"
 #include "SlimeUdpClient.h"
+#include "esp_log.h"
+
+int custom_vprintf(const char *fmt, va_list ap) {
+    char buf[512];
+    int len = vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
+    if (len > 0) {
+        buf[len] = '\0';
+        Serial.print(buf);
+        UdpLogger.print(buf);
+    }
+    return len;
+}
 
 UsbHidHandler usbHandler;
 SlimeUdpClient slimeClient;
@@ -24,6 +36,9 @@ void setup() {
     Serial.begin(115200);
     // Wait for serial if you want, but better to proceed without it (since it's a dongle adapter)
     delay(2000); 
+
+    // Redirect ESP-IDF logs to UdpLogger
+    esp_log_set_vprintf(custom_vprintf);
 
     DEBUG_PRINTLN("Starting EsbImuReceiverToLan ESP32 Port...");
 
@@ -52,13 +67,6 @@ void loop() {
             
             // Initialize USB Host HID AFTER network is ready so we can log any crashes!
             usbHandler.begin(&slimeClient);
-
-            // Perform handshake on first connect/reconnect
-            // Generate MAC address to use for SlimeVR
-            uint8_t mac[6];
-            WiFi.macAddress(mac);
-            slimeClient.setHardwareAddress(mac);
-            slimeClient.forceHandshake();
             
         } else if (!isConnected && wasConnected) {
             DEBUG_PRINTLN("WiFi lost connection. Reconnecting...");

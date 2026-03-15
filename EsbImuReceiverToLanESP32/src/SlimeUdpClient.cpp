@@ -1,64 +1,92 @@
 #include "SlimeUdpClient.h"
+#include "config.h"
 #include <vector>
 #include <string.h>
 
 SlimeUdpClient::SlimeUdpClient() {
-    _packetId = 0;
     _protocolVersion = 19;
-    _handshakeOngoing = false;
-    _isInitialized = false;
     _serverPort = 6969;
-    _lastHeartbeatTime = 0;
 }
 
-void SlimeUdpClient::begin(const char* ip, uint16_t port) {
-    _serverIp.fromString(ip);
-    _serverPort = port;
-    _udp.begin(port);
+void SlimeUdpClient::begin(const char* serverIp, uint16_t serverPort) {
+    _serverIp.fromString(serverIp);
+    _serverPort = serverPort;
+    
+    // Trackers will initialize their own sockets when registered
+    
+    DEBUG_PRINTLN("SlimeUdpClient Initialized");
 }
 
-void SlimeUdpClient::setHardwareAddress(uint8_t mac[6]) {
-    memcpy(_hardwareAddress, mac, 6);
-}
+void SlimeUdpClient::initializeTracker(uint8_t trackerIndex, const uint8_t mac[6], int imuType) {
+    if (trackerIndex >= 10) return;
+    VirtualTracker& vt = _trackers[trackerIndex];
+    if (vt.active) return;
 
-void SlimeUdpClient::forceHandshake() {
-    _handshakeOngoing = true;
-    _isInitialized = false;
-    sendHandshake();
+    vt.active = true;
+    memcpy(vt.hardwareAddress, mac, 6);
+    vt.packetId = 0;
+    vt.handshakeOngoing = true;
+    vt.isInitialized = false;
+    vt.imuType = imuType;
+    vt.lastHeartbeatTime = millis();
+    vt.lastHandshakeTime = millis();
+    vt.udp.begin(50000 + trackerIndex); // Bind to a unique local ephemeral port
+    
+    sendHandshake(trackerIndex);
 }
 
 void SlimeUdpClient::loop() {
-    if (_handshakeOngoing) {
-        // Simple retry logic later, for now just send heartbeat
-    }
+    for (int i = 0; i < 10; i++) {
+        VirtualTracker& vt = _trackers[i];
+        if (!vt.active) continue;
 
-    if (millis() - _lastHeartbeatTime > 900) {
-        _lastHeartbeatTime = millis();
-        sendHeartbeat();
-    }
+        if (vt.handshakeOngoing) {
+            // Check handshake response, retry every 1000ms
+            if (millis() - vt.lastHandshakeTime > 1000) {
+                vt.lastHandshakeTime = millis();
+                sendHandshake(i);
+            }
+        }
 
-    // Need to parse incoming packets here if necessary (like heartbeat responses)
-    int packetSize = _udp.parsePacket();
-    if (packetSize) {
-        uint8_t buffer[128];
-        int len = _udp.read(buffer, sizeof(buffer));
-        if (len > 0) {
-            // Check for Hey OVR =D 5 string to confirm handshake
-            String response((char*)buffer);
-            if (response.indexOf("Hey OVR =D 5") >= 0) {
-                _handshakeOngoing = false;
-                _isInitialized = true;
-                DEBUG_PRINTLN("SlimeVR Handshake Successful!");
+        if (millis() - vt.lastHeartbeatTime > 900) {
+            vt.lastHeartbeatTime = millis();
+            sendHeartbeat(i);
+        }
+
+        // Parse incoming packets for this specific tracker
+        int packetSize = vt.udp.parsePacket();
+        if (packetSize) {
+            uint8_t buffer[128];
+            int len = vt.udp.read(buffer, sizeof(buffer));
+            if (len > 0) {
+                // Check for Hey OVR =D 5 string to confirm handshake
+                String response((char*)buffer);
+                if (response.indexOf("Hey OVR =D 5") >= 0) {
+                    if (vt.handshakeOngoing) {
+                        vt.handshakeOngoing = false;
+                        vt.isInitialized = true;
+                        
+                        // C# App sends one last Handshake immediately, followed by the SENSOR_INFO
+                        sendHandshake(i);
+                        addTracker(i, vt.imuType);
+
+#if ENABLE_DEBUG_PRINT
+                        DEBUG_PRINTF("SlimeVR Handshake Successful for Tracker %d!\n", i);
+#endif
+                    }
+                }
             }
         }
     }
 }
 
-long SlimeUdpClient::nextPacketId() {
-    return _packetId++;
+long SlimeUdpClient::nextPacketId(uint8_t trackerIndex) {
+    if (trackerIndex >= 10) return 0;
+    return _trackers[trackerIndex].packetId++;
 }
 
-void SlimeUdpClient::sendHeartbeat() {
+void SlimeUdpClient::sendHeartbeat(uint8_t trackerIndex) {
+    if (trackerIndex >= 10) return;
     uint8_t buffer[13];
     int offset = 0;
 
@@ -70,25 +98,29 @@ void SlimeUdpClient::sendHeartbeat() {
     buffer[offset++] = packetType & 0xFF;
 
     // Packet counter (int64)
-    long id = nextPacketId();
-    buffer[offset++] = (id >> 56) & 0xFF;
-    buffer[offset++] = (id >> 48) & 0xFF;
-    buffer[offset++] = (id >> 40) & 0xFF;
-    buffer[offset++] = (id >> 32) & 0xFF;
-    buffer[offset++] = (id >> 24) & 0xFF;
-    buffer[offset++] = (id >> 16) & 0xFF;
-    buffer[offset++] = (id >> 8) & 0xFF;
+    long id = nextPacketId(trackerIndex);
+    buffer[offset++] = ((uint64_t)id >> 56) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 48) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 40) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 32) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 24) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 16) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 8) & 0xFF;
     buffer[offset++] = id & 0xFF;
 
     // Tracker Id
     buffer[offset++] = 0;
 
-    _udp.beginPacket(_serverIp, _serverPort);
-    _udp.write(buffer, offset);
-    _udp.endPacket();
+    _trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort);
+    _trackers[trackerIndex].udp.write(buffer, offset);
+    _trackers[trackerIndex].udp.endPacket();
+
+    DEBUG_PRINTF("Sent Heartbeat for Tracker %d\n", trackerIndex);
 }
 
-void SlimeUdpClient::sendHandshake() {
+void SlimeUdpClient::sendHandshake(uint8_t trackerIndex) {
+    if (trackerIndex >= 10) return;
+    VirtualTracker& vt = _trackers[trackerIndex];
     uint8_t buffer[256];
     int offset = 0;
     
@@ -98,14 +130,14 @@ void SlimeUdpClient::sendHandshake() {
     buffer[offset++] = (packetType >> 8) & 0xFF;
     buffer[offset++] = packetType & 0xFF;
 
-    long id = nextPacketId();
-    buffer[offset++] = (id >> 56) & 0xFF;
-    buffer[offset++] = (id >> 48) & 0xFF;
-    buffer[offset++] = (id >> 40) & 0xFF;
-    buffer[offset++] = (id >> 32) & 0xFF;
-    buffer[offset++] = (id >> 24) & 0xFF;
-    buffer[offset++] = (id >> 16) & 0xFF;
-    buffer[offset++] = (id >> 8) & 0xFF;
+    long id = nextPacketId(trackerIndex);
+    buffer[offset++] = ((uint64_t)id >> 56) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 48) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 40) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 32) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 24) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 16) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 8) & 0xFF;
     buffer[offset++] = id & 0xFF;
 
     // Board type, IMU type, etc.
@@ -130,17 +162,18 @@ void SlimeUdpClient::sendHandshake() {
     }
 
     for (int i=0; i<6; i++) {
-        buffer[offset++] = _hardwareAddress[i];
+        buffer[offset++] = vt.hardwareAddress[i];
     }
     
-    _udp.beginPacket(_serverIp, _serverPort);
-    _udp.write(buffer, offset);
-    _udp.endPacket();
+    _trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort);
+    _trackers[trackerIndex].udp.write(buffer, offset);
+    _trackers[trackerIndex].udp.endPacket();
 
-    DEBUG_PRINTLN("Sent Handshake to SlimeVR!");
+    DEBUG_PRINTF("Sent Handshake to SlimeVR for Tracker %d!\n", trackerIndex);
 }
 
-void SlimeUdpClient::addTracker(uint8_t trackerId, int imuType) {
+void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType) {
+    if (trackerIndex >= 10) return;
     uint8_t buffer[20];
     int offset = 0;
 
@@ -150,17 +183,17 @@ void SlimeUdpClient::addTracker(uint8_t trackerId, int imuType) {
     buffer[offset++] = (packetType >> 8) & 0xFF;
     buffer[offset++] = packetType & 0xFF;
 
-    long id = nextPacketId();
-    buffer[offset++] = (id >> 56) & 0xFF;
-    buffer[offset++] = (id >> 48) & 0xFF;
-    buffer[offset++] = (id >> 40) & 0xFF;
-    buffer[offset++] = (id >> 32) & 0xFF;
-    buffer[offset++] = (id >> 24) & 0xFF;
-    buffer[offset++] = (id >> 16) & 0xFF;
-    buffer[offset++] = (id >> 8) & 0xFF;
+    long id = nextPacketId(trackerIndex);
+    buffer[offset++] = ((uint64_t)id >> 56) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 48) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 40) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 32) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 24) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 16) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 8) & 0xFF;
     buffer[offset++] = id & 0xFF;
 
-    buffer[offset++] = trackerId;
+    buffer[offset++] = 0; // Hardcoded Tracker ID 0 so it's a main tracker, not an extension
     buffer[offset++] = 0; // Sensor status (ok)
     buffer[offset++] = imuType & 0xFF; // IMU Type
     
@@ -171,14 +204,15 @@ void SlimeUdpClient::addTracker(uint8_t trackerId, int imuType) {
     buffer[offset++] = 0; // Tracker Position (none)
     buffer[offset++] = 1; // Tracker Data Type (ROTATION)
 
-    _udp.beginPacket(_serverIp, _serverPort);
-    _udp.write(buffer, offset);
-    _udp.endPacket();
+    _trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort);
+    _trackers[trackerIndex].udp.write(buffer, offset);
+    _trackers[trackerIndex].udp.endPacket();
 
-    DEBUG_PRINTF("Registered Tracker ID: %d\n", trackerId);
+    DEBUG_PRINTF("Registered Tracker Index: %d\n", trackerIndex);
 }
 
-void SlimeUdpClient::sendRotation(uint8_t trackerId, float qx, float qy, float qz, float qw) {
+void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy, float qz, float qw) {
+    if (trackerIndex >= 10) return;
     uint8_t buffer[35];
     int offset = 0;
 
@@ -188,17 +222,17 @@ void SlimeUdpClient::sendRotation(uint8_t trackerId, float qx, float qy, float q
     buffer[offset++] = (packetType >> 8) & 0xFF;
     buffer[offset++] = packetType & 0xFF;
 
-    long id = nextPacketId();
-    buffer[offset++] = (id >> 56) & 0xFF;
-    buffer[offset++] = (id >> 48) & 0xFF;
-    buffer[offset++] = (id >> 40) & 0xFF;
-    buffer[offset++] = (id >> 32) & 0xFF;
-    buffer[offset++] = (id >> 24) & 0xFF;
-    buffer[offset++] = (id >> 16) & 0xFF;
-    buffer[offset++] = (id >> 8) & 0xFF;
+    long id = nextPacketId(trackerIndex);
+    buffer[offset++] = ((uint64_t)id >> 56) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 48) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 40) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 32) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 24) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 16) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 8) & 0xFF;
     buffer[offset++] = id & 0xFF;
 
-    buffer[offset++] = trackerId;
+    buffer[offset++] = 0; // Hardcoded Tracker ID 0 so it's a main tracker, not an extension
     buffer[offset++] = 1; // DataType
 
     // Floats in Big Endian
@@ -214,12 +248,13 @@ void SlimeUdpClient::sendRotation(uint8_t trackerId, float qx, float qy, float q
 
     buffer[offset++] = 0; // Calibration Info
 
-    _udp.beginPacket(_serverIp, _serverPort);
-    _udp.write(buffer, offset);
-    _udp.endPacket();
+    _trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort);
+    _trackers[trackerIndex].udp.write(buffer, offset);
+    _trackers[trackerIndex].udp.endPacket();
 }
 
-void SlimeUdpClient::sendAcceleration(uint8_t trackerId, float ax, float ay, float az) {
+void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay, float az) {
+    if (trackerIndex >= 10) return;
     uint8_t buffer[30];
     int offset = 0;
 
@@ -229,14 +264,14 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerId, float ax, float ay, flo
     buffer[offset++] = (packetType >> 8) & 0xFF;
     buffer[offset++] = packetType & 0xFF;
 
-    long id = nextPacketId();
-    buffer[offset++] = (id >> 56) & 0xFF;
-    buffer[offset++] = (id >> 48) & 0xFF;
-    buffer[offset++] = (id >> 40) & 0xFF;
-    buffer[offset++] = (id >> 32) & 0xFF;
-    buffer[offset++] = (id >> 24) & 0xFF;
-    buffer[offset++] = (id >> 16) & 0xFF;
-    buffer[offset++] = (id >> 8) & 0xFF;
+    long id = nextPacketId(trackerIndex);
+    buffer[offset++] = ((uint64_t)id >> 56) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 48) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 40) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 32) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 24) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 16) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 8) & 0xFF;
     buffer[offset++] = id & 0xFF;
 
     uint32_t val;
@@ -247,14 +282,15 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerId, float ax, float ay, flo
     memcpy(&val, &az, sizeof(float));
     buffer[offset++] = (val >> 24) & 0xFF; buffer[offset++] = (val >> 16) & 0xFF; buffer[offset++] = (val >> 8) & 0xFF; buffer[offset++] = val & 0xFF;
 
-    buffer[offset++] = trackerId;
+    buffer[offset++] = 0; // Hardcoded Tracker ID 0 so it's a main tracker, not an extension
 
-    _udp.beginPacket(_serverIp, _serverPort);
-    _udp.write(buffer, offset);
-    _udp.endPacket();
+    _trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort);
+    _trackers[trackerIndex].udp.write(buffer, offset);
+    _trackers[trackerIndex].udp.endPacket();
 }
 
-void SlimeUdpClient::sendBattery(float voltage, float batteryPercentage) {
+void SlimeUdpClient::sendBattery(uint8_t trackerIndex, float voltage, float batteryPercentage) {
+    if (trackerIndex >= 10) return;
     uint8_t buffer[24];
     int offset = 0;
 
@@ -264,14 +300,14 @@ void SlimeUdpClient::sendBattery(float voltage, float batteryPercentage) {
     buffer[offset++] = (packetType >> 8) & 0xFF;
     buffer[offset++] = packetType & 0xFF;
 
-    long id = nextPacketId();
-    buffer[offset++] = (id >> 56) & 0xFF;
-    buffer[offset++] = (id >> 48) & 0xFF;
-    buffer[offset++] = (id >> 40) & 0xFF;
-    buffer[offset++] = (id >> 32) & 0xFF;
-    buffer[offset++] = (id >> 24) & 0xFF;
-    buffer[offset++] = (id >> 16) & 0xFF;
-    buffer[offset++] = (id >> 8) & 0xFF;
+    long id = nextPacketId(trackerIndex);
+    buffer[offset++] = ((uint64_t)id >> 56) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 48) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 40) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 32) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 24) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 16) & 0xFF;
+    buffer[offset++] = ((uint64_t)id >> 8) & 0xFF;
     buffer[offset++] = id & 0xFF;
 
     uint32_t val;
@@ -283,7 +319,7 @@ void SlimeUdpClient::sendBattery(float voltage, float batteryPercentage) {
     memcpy(&val, &pct, sizeof(float));
     buffer[offset++] = (val >> 24) & 0xFF; buffer[offset++] = (val >> 16) & 0xFF; buffer[offset++] = (val >> 8) & 0xFF; buffer[offset++] = val & 0xFF;
 
-    _udp.beginPacket(_serverIp, _serverPort);
-    _udp.write(buffer, offset);
-    _udp.endPacket();
+    _trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort);
+    _trackers[trackerIndex].udp.write(buffer, offset);
+    _trackers[trackerIndex].udp.endPacket();
 }

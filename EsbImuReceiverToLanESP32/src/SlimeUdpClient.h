@@ -2,36 +2,39 @@
 
 #include <Arduino.h>
 #include <WiFiUdp.h>
-#include "config.h"
+
+struct VirtualTracker {
+    bool active = false;
+    uint8_t hardwareAddress[6] = {0};
+    long packetId = 0;
+    bool handshakeOngoing = false;
+    bool isInitialized = false;
+    uint32_t lastHeartbeatTime = 0;
+    uint32_t lastHandshakeTime = 0;
+    int imuType = 0;
+    WiFiUDP udp; // Each tracker needs its own distinct UDP socket (local port)
+};
 
 class SlimeUdpClient {
 public:
     SlimeUdpClient();
     void begin(const char* ip, uint16_t port);
-    void setHardwareAddress(uint8_t mac[6]);
-    
-    void forceHandshake();
+    void initializeTracker(uint8_t trackerIndex, const uint8_t mac[6], int imuType);
     void loop();
 
-    void sendHandshake();
-    void sendHeartbeat();
-    void addTracker(uint8_t trackerId, int imuType);
-    void sendRotation(uint8_t trackerId, float qx, float qy, float qz, float qw);
-    void sendAcceleration(uint8_t trackerId, float ax, float ay, float az);
-    void sendBattery(float voltage, float batteryPercentage);
+    void sendRotation(uint8_t trackerIndex, float qx, float qy, float qz, float qw);
+    void sendAcceleration(uint8_t trackerIndex, float ax, float ay, float az);
+    void sendBattery(uint8_t trackerIndex, float voltage, float batteryPercentage);
 
 private:
-    long nextPacketId();
-
-    WiFiUDP _udp;
     IPAddress _serverIp;
     uint16_t _serverPort;
-    uint8_t _hardwareAddress[6];
-
-    long _packetId;
     int _protocolVersion;
 
-    bool _handshakeOngoing;
-    bool _isInitialized;
-    uint32_t _lastHeartbeatTime;
+    VirtualTracker _trackers[10];
+
+    long nextPacketId(uint8_t trackerIndex);
+    void sendHandshake(uint8_t trackerIndex);
+    void sendHeartbeat(uint8_t trackerIndex);
+    void addTracker(uint8_t trackerIndex, int imuType);
 };

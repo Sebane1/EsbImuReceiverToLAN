@@ -177,20 +177,39 @@ void processHidData(SlimeUdpClient* udpClient, uint8_t* dataReceived, size_t val
         return; // Malformed
     }
 
+    // A basic map to keep track of which hardware ID (0-255) maps to which trackerIndex (0-9)
+    static uint8_t dongleIdToTrackerIndex[256];
+    static bool dongleIdMapped[256] = {false};
+    static uint8_t nextTrackerIndex = 0;
+    static uint8_t storedMacs[256][6] = {0};
+
     int packetCount = validLength / 16;
     for (int i = 0; i < packetCount * 16; i += 16) {
         uint8_t packetType = dataReceived[i];
         uint8_t id = dataReceived[i + 1];
-        uint8_t trackerId = id; // simplified mapping for single dongle
         
         if (packetType == 255) {
             DEBUG_PRINTLN("Device Register Packet received");
+            // MAC Address is in bytes 2-7
+            memcpy(storedMacs[id], &dataReceived[i+2], 6);
+            
+            if (!dongleIdMapped[id] && nextTrackerIndex < 10) {
+                dongleIdToTrackerIndex[id] = nextTrackerIndex++;
+                dongleIdMapped[id] = true;
+            }
             continue;
         }
 
+        if (!dongleIdMapped[id]) {
+            // We haven't seen a register packet for this ID yet, ignore data
+            continue;
+        }
+        
+        uint8_t trackerIndex = dongleIdToTrackerIndex[id];
+
         if (packetType == 0) {
             uint8_t imuId = dataReceived[i + 8];
-            udpClient->addTracker(trackerId, (int)imuId);
+            udpClient->initializeTracker(trackerIndex, storedMacs[id], (int)imuId);
             continue;
         }
 
@@ -278,21 +297,20 @@ void processHidData(SlimeUdpClient* udpClient, uint8_t* dataReceived, size_t val
         }
 
         if (hasRotation) {
-            udpClient->sendRotation(trackerId, qx, qy, qz, qw);
+            udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
         }
         if (hasAccel) {
             // Apply Unsandwich transformation from TrackersHID.cs
-            // The C# code does: z-axis rotation by PI/2.
-            // Result roughly swaps/negates axes to match SlimeVR expected orientation.
+            // Usually we don't do complex matrix rotation on the MCU unless necessary
             // Unsandwich applies inverse offset correction. 
             // We'll send raw and let SlimeVR calibrate, or apply a rough offset:
             // For now, sending standard ax, ay, az.
-            udpClient->sendAcceleration(trackerId, ax, ay, az);
+            udpClient->sendAcceleration(trackerIndex, ax, ay, az);
         }
         if (hasBattery) {
-            float voltage = (batt_v + 245.0f) / 100.0f;
             float percentage = (batt == 128) ? 100.0f : (batt & 127);
-            udpClient->sendBattery(voltage, percentage);
+            float voltage = 3.3f; // Placeholder since batt_v is arbitrary ADC val
+            udpClient->sendBattery(trackerIndex, voltage, percentage);
         }
     }
 }
