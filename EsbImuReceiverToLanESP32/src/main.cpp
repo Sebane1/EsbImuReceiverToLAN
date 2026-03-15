@@ -81,6 +81,7 @@ void loop() {
     if (wasConnected) {
         // Run SlimeVR UDP Loop (Heartbeat, Retries, etc.)
         slimeClient.loop();
+        UdpLogger.loop();
     }
 
     // Process USB HID events

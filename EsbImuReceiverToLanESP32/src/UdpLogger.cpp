@@ -2,7 +2,7 @@
 
 UdpLoggerClass UdpLogger;
 
-UdpLoggerClass::UdpLoggerClass() : ready(false), bufferIdx(0) {}
+UdpLoggerClass::UdpLoggerClass() : ready(false), bufferIdx(0), udpOutputEnabled(false), lastEnableTime(0) {}
 
 void UdpLoggerClass::begin(const char* ip, uint16_t port) {
     targetIp = ip;
@@ -15,7 +15,7 @@ size_t UdpLoggerClass::write(uint8_t c) {
     // Always fall back to serial
     Serial.write(c);
 
-    if (!ready) return 1;
+    if (!ready || !udpOutputEnabled) return 1;
     
     buffer[bufferIdx++] = c;
     if (c == '\n' || bufferIdx >= sizeof(buffer) - 1) {
@@ -28,7 +28,7 @@ size_t UdpLoggerClass::write(const uint8_t *buf, size_t size) {
     // Always fall back to serial
     Serial.write(buf, size);
 
-    if (!ready) return size;
+    if (!ready || !udpOutputEnabled) return size;
     
     // Flush pending chars
     if (bufferIdx > 0) flush_buffer();
@@ -46,5 +46,34 @@ void UdpLoggerClass::flush_buffer() {
             udp.endPacket();
         }
         bufferIdx = 0;
+    }
+}
+
+void UdpLoggerClass::loop() {
+    if (!ready) return;
+    
+    // Auto-disable if we haven't received a keepalive in 15 seconds
+    if (udpOutputEnabled && millis() - lastEnableTime > 15000) {
+        udpOutputEnabled = false;
+        Serial.println("UDP Logging disabled due to timeout");
+    }
+
+    int packetSize = udp.parsePacket();
+    if (packetSize) {
+        char buf[32] = {0};
+        int len = udp.read(buf, sizeof(buf) - 1);
+        if (len > 0) {
+            String cmd = String(buf);
+            if (cmd.startsWith("ENABLE_LOGS")) {
+                if (!udpOutputEnabled) {
+                    udpOutputEnabled = true;
+                    Serial.println("UDP Logging ENABLED via Python script");
+                }
+                lastEnableTime = millis();
+            } else if (cmd.startsWith("DISABLE_LOGS")) {
+                udpOutputEnabled = false;
+                Serial.println("UDP Logging DISABLED manually");
+            }
+        }
     }
 }
