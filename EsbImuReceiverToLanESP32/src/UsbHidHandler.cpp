@@ -4,8 +4,10 @@
 
 #include "usb/usb_host.h"
 #include "hid_host.h"
+#include <map>
+#include <utility>
 
-extern void processHidData(SlimeUdpClient* udpClient, uint8_t* dataReceived, size_t validLength);
+extern void processHidData(SlimeUdpClient* udpClient, hid_host_device_handle_t hid_device, uint8_t* dataReceived, size_t validLength);
 
 static const char *TAG = "UsbHid";
 static QueueHandle_t hid_host_event_queue;
@@ -33,7 +35,7 @@ static void hid_host_interface_callback(hid_host_device_handle_t hid_device_hand
     DEBUG_PRINTF("HID IN Report received! Length: %d\n", data_length);
 
     if (g_udpClient) {
-        processHidData(g_udpClient, data, data_length);
+        processHidData(g_udpClient, hid_device_handle, data, data_length);
     }
     break;
   case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
@@ -171,45 +173,49 @@ static float q11ToFloat(int16_t q) {
     return q / 1024.0f;
 }
 
-void processHidData(SlimeUdpClient* udpClient, uint8_t* dataReceived, size_t validLength) {
+void processHidData(SlimeUdpClient* udpClient, hid_host_device_handle_t hid_device, uint8_t* dataReceived, size_t validLength) {
     if (validLength == 0 || validLength % 16 != 0) {
         DEBUG_PRINTF("Dropped HID Report - Invalid length: %d\n", validLength);
         return; // Malformed
     }
 
-    // A basic map to keep track of which hardware ID (0-255) maps to which trackerIndex (0-9)
-    static uint8_t dongleIdToTrackerIndex[256];
-    static bool dongleIdMapped[256] = {false};
+    // A map to keep track of which (dongle, hardware ID) maps to which trackerIndex (0-39)
+    static std::map<std::pair<hid_host_device_handle_t, uint8_t>, uint8_t> dongleIdToTrackerIndex;
     static uint8_t nextTrackerIndex = 0;
-    static uint8_t storedMacs[256][6] = {0};
+    static uint8_t storedMacs[40][6] = {0};
 
     int packetCount = validLength / 16;
     for (int i = 0; i < packetCount * 16; i += 16) {
         uint8_t packetType = dataReceived[i];
         uint8_t id = dataReceived[i + 1];
         
+        std::pair<hid_host_device_handle_t, uint8_t> key = {hid_device, id};
+
         if (packetType == 255) {
             DEBUG_PRINTLN("Device Register Packet received");
-            // MAC Address is in bytes 2-7
-            memcpy(storedMacs[id], &dataReceived[i+2], 6);
             
-            if (!dongleIdMapped[id] && nextTrackerIndex < 10) {
-                dongleIdToTrackerIndex[id] = nextTrackerIndex++;
-                dongleIdMapped[id] = true;
+            if (dongleIdToTrackerIndex.find(key) == dongleIdToTrackerIndex.end() && nextTrackerIndex < 40) {
+                dongleIdToTrackerIndex[key] = nextTrackerIndex++;
+            }
+            
+            if (dongleIdToTrackerIndex.find(key) != dongleIdToTrackerIndex.end()) {
+                uint8_t tIdx = dongleIdToTrackerIndex[key];
+                // MAC Address is in bytes 2-7
+                memcpy(storedMacs[tIdx], &dataReceived[i+2], 6);
             }
             continue;
         }
 
-        if (!dongleIdMapped[id]) {
-            // We haven't seen a register packet for this ID yet, ignore data
+        if (dongleIdToTrackerIndex.find(key) == dongleIdToTrackerIndex.end()) {
+            // We haven't seen a register packet for this dongle's tracker ID yet, ignore data
             continue;
         }
         
-        uint8_t trackerIndex = dongleIdToTrackerIndex[id];
+        uint8_t trackerIndex = dongleIdToTrackerIndex[key];
 
         if (packetType == 0) {
             uint8_t imuId = dataReceived[i + 8];
-            udpClient->initializeTracker(trackerIndex, storedMacs[id], (int)imuId);
+            udpClient->initializeTracker(trackerIndex, storedMacs[trackerIndex], (int)imuId);
             continue;
         }
 

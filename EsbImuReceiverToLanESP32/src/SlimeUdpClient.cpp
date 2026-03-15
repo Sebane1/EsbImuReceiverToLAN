@@ -18,7 +18,7 @@ void SlimeUdpClient::begin(const char* serverIp, uint16_t serverPort) {
 }
 
 void SlimeUdpClient::initializeTracker(uint8_t trackerIndex, const uint8_t mac[6], int imuType) {
-    if (trackerIndex >= 10) return;
+    if (trackerIndex >= 40) return;
     VirtualTracker& vt = _trackers[trackerIndex];
     if (vt.active) return;
 
@@ -36,7 +36,7 @@ void SlimeUdpClient::initializeTracker(uint8_t trackerIndex, const uint8_t mac[6
 }
 
 void SlimeUdpClient::loop() {
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 40; i++) {
         VirtualTracker& vt = _trackers[i];
         if (!vt.active) continue;
 
@@ -81,12 +81,12 @@ void SlimeUdpClient::loop() {
 }
 
 long SlimeUdpClient::nextPacketId(uint8_t trackerIndex) {
-    if (trackerIndex >= 10) return 0;
+    if (trackerIndex >= 40) return 0;
     return _trackers[trackerIndex].packetId++;
 }
 
 void SlimeUdpClient::sendHeartbeat(uint8_t trackerIndex) {
-    if (trackerIndex >= 10) return;
+    if (trackerIndex >= 40) return;
     uint8_t buffer[13];
     int offset = 0;
 
@@ -119,7 +119,7 @@ void SlimeUdpClient::sendHeartbeat(uint8_t trackerIndex) {
 }
 
 void SlimeUdpClient::sendHandshake(uint8_t trackerIndex) {
-    if (trackerIndex >= 10) return;
+    if (trackerIndex >= 40) return;
     VirtualTracker& vt = _trackers[trackerIndex];
     uint8_t buffer[256];
     int offset = 0;
@@ -173,7 +173,7 @@ void SlimeUdpClient::sendHandshake(uint8_t trackerIndex) {
 }
 
 void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType) {
-    if (trackerIndex >= 10) return;
+    if (trackerIndex >= 40) return;
     uint8_t buffer[20];
     int offset = 0;
 
@@ -212,7 +212,7 @@ void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType) {
 }
 
 void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy, float qz, float qw) {
-    if (trackerIndex >= 10) return;
+    if (trackerIndex >= 40) return;
     uint8_t buffer[35];
     int offset = 0;
 
@@ -254,7 +254,7 @@ void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy, floa
 }
 
 void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay, float az) {
-    if (trackerIndex >= 10) return;
+    if (trackerIndex >= 40) return;
     uint8_t buffer[30];
     int offset = 0;
 
@@ -290,7 +290,7 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay, 
 }
 
 void SlimeUdpClient::sendBattery(uint8_t trackerIndex, float voltage, float batteryPercentage) {
-    if (trackerIndex >= 10) return;
+    if (trackerIndex >= 40) return;
     uint8_t buffer[24];
     int offset = 0;
 

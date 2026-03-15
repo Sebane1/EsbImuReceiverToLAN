@@ -31,7 +31,7 @@ private:
     uint16_t _serverPort;
     int _protocolVersion;
 
-    VirtualTracker _trackers[10];
+    VirtualTracker _trackers[40];
 
     long nextPacketId(uint8_t trackerIndex);
     void sendHandshake(uint8_t trackerIndex);
