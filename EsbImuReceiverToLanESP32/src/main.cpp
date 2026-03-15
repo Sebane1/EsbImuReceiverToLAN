@@ -4,18 +4,6 @@
 #include "config.h"
 #include "UsbHidHandler.h"
 #include "SlimeUdpClient.h"
-#include "esp_log.h"
-
-int custom_vprintf(const char *fmt, va_list ap) {
-    char buf[512];
-    int len = vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
-    if (len > 0) {
-        buf[len] = '\0';
-        Serial.print(buf);
-        UdpLogger.print(buf);
-    }
-    return len;
-}
 
 UsbHidHandler usbHandler;
 SlimeUdpClient slimeClient;
@@ -37,9 +25,6 @@ void setup() {
     // Wait for serial if you want, but better to proceed without it (since it's a dongle adapter)
     delay(2000); 
 
-    // Redirect ESP-IDF logs to UdpLogger
-    esp_log_set_vprintf(custom_vprintf);
-
     DEBUG_PRINTLN("Starting EsbImuReceiverToLan ESP32 Port...");
 
     setupWifi();
@@ -56,21 +41,24 @@ void loop() {
         
         if (isConnected && !wasConnected) {
             wasConnected = true;
+            slimeClient.onWiFiConnect();
             
-            // Start UDP Logger
-            UdpLogger.begin(SLIMEVR_SERVER_IP, 6970);
-
             DEBUG_PRINTLN("");
             DEBUG_PRINTLN("WiFi connected!");
             DEBUG_PRINT("IP address: ");
             DEBUG_PRINTLN(WiFi.localIP());
             
             // Initialize USB Host HID AFTER network is ready so we can log any crashes!
-            usbHandler.begin(&slimeClient);
+            static bool usbInitialized = false;
+            if (!usbInitialized) {
+                usbHandler.begin(&slimeClient);
+                usbInitialized = true;
+            }
             
         } else if (!isConnected && wasConnected) {
             DEBUG_PRINTLN("WiFi lost connection. Reconnecting...");
             wasConnected = false;
+            slimeClient.onWiFiDisconnect();
             WiFi.reconnect();
         } else if (!isConnected && !wasConnected) {
             DEBUG_PRINT("Still connecting to WiFi... Status: ");
@@ -81,7 +69,6 @@ void loop() {
     if (wasConnected) {
         // Run SlimeVR UDP Loop (Heartbeat, Retries, etc.)
         slimeClient.loop();
-        UdpLogger.loop();
     }
 
     // Process USB HID events

@@ -21,6 +21,14 @@ typedef struct {
   void *arg;
 } hid_host_event_queue_t;
 
+typedef struct {
+    hid_host_device_handle_t hid_device;
+    uint8_t data[64];
+    size_t length;
+} hid_report_t;
+
+static QueueHandle_t hid_data_queue = NULL;
+
 static void
 hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
                             const hid_host_interface_event_t event, void *arg) {
@@ -33,8 +41,15 @@ hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
   case HID_HOST_INTERFACE_EVENT_INPUT_REPORT:
     ESP_ERROR_CHECK(hid_host_device_get_raw_input_report_data(
         hid_device_handle, data, 64, &data_length));
-    if (g_udpClient) {
-      processHidData(g_udpClient, hid_device_handle, data, data_length);
+    
+    if (hid_data_queue && data_length > 0) {
+        hid_report_t report;
+        report.hid_device = hid_device_handle;
+        report.length = (data_length > sizeof(report.data)) ? sizeof(report.data) : data_length;
+        memcpy(report.data, data, report.length);
+        if (xQueueSend(hid_data_queue, &report, 0) != pdTRUE) {
+            // Drop silently to avoid blocking Core 0
+        }
     }
     break;
   case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
@@ -140,6 +155,9 @@ void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
   _udpClient = udpClient;
   g_udpClient = udpClient;
 
+  // Create queue for HID reports (30 entries × ~76 bytes = ~2.3KB)
+  hid_data_queue = xQueueCreate(30, sizeof(hid_report_t));
+
   BaseType_t task_created =
       xTaskCreatePinnedToCore(usb_lib_task, "usb_events", 4096,
                               xTaskGetCurrentTaskHandle(), 2, NULL, 0);
@@ -163,7 +181,15 @@ void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
   DEBUG_PRINTLN("USB Host Handler Initialized.");
 }
 
-void UsbHidHandler::loop() {}
+void UsbHidHandler::loop() {
+    if (!hid_data_queue || !_udpClient) return;
+
+    hid_report_t report;
+    // Process all pending packets off the queue on the Arduino Core 1
+    while (xQueueReceive(hid_data_queue, &report, 0) == pdTRUE) {
+        processHidData(_udpClient, report.hid_device, report.data, report.length);
+    }
+}
 
 // Below is the translated parser logic from TrackersHID.cs
 // Call this function from your USB HID IN Report callback
@@ -194,10 +220,9 @@ void processHidData(SlimeUdpClient *udpClient,
     std::pair<hid_host_device_handle_t, uint8_t> key = {hid_device, id};
 
     if (packetType == 255) {
-      DEBUG_PRINTLN("Device Register Packet received");
-
       if (dongleIdToTrackerIndex.find(key) == dongleIdToTrackerIndex.end() &&
-          nextTrackerIndex < 40) {
+          nextTrackerIndex < 11) {
+        DEBUG_PRINTF("New Device Registered: ID %d assigning Tracker Index %d\n", id, nextTrackerIndex);
         dongleIdToTrackerIndex[key] = nextTrackerIndex++;
       }
 
@@ -277,8 +302,11 @@ void processHidData(SlimeUdpClient *udpClient,
       batt_v = dataReceived[i + 3];
       hasBattery = true;
 
-      uint32_t q_buf = 0;
-      memcpy(&q_buf, &dataReceived[i + 5], 4);
+      uint32_t q_buf = ((uint32_t)dataReceived[i + 5]) |
+                       ((uint32_t)dataReceived[i + 6] << 8) |
+                       ((uint32_t)dataReceived[i + 7] << 16) |
+                       ((uint32_t)dataReceived[i + 8] << 24);
+
       int q0 = (int)(q_buf & 1023);
       int q1 = (int)((q_buf >> 10) & 2047);
       int q2 = (int)((q_buf >> 21) & 2047);
@@ -318,16 +346,42 @@ void processHidData(SlimeUdpClient *udpClient,
       break;
     }
 
-    if (hasRotation) {
-      udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
-    }
-    if (hasAccel) {
-      udpClient->sendAcceleration(trackerIndex, ax, ay, az);
-    }
-    if (hasBattery) {
-      float percentage = (batt == 128) ? 100.0f : (batt & 127);
-      float voltage = 3.3f; // Placeholder since batt_v is arbitrary ADC val
-      udpClient->sendBattery(trackerIndex, voltage, percentage);
+    // Limiter removed for stress testing. 
+    // The previous stability fixes (heap guards and proper data population) 
+    // should now prevent crashes even at raw 500Hz-1000Hz update rates.
+    VirtualTracker* vt = udpClient->getTracker(trackerIndex);
+    if (vt) {
+        // Drop data if we are in a backoff period from ERR_MEM (Error 12)
+        if (!udpClient->isNetworkReady(trackerIndex)) {
+            continue;
+        }
+
+        // Re-injecting the throttle: 1ms is effectively unthrottled but allows backoff.
+        // Prevents WiFi TX buffer exhaustion (ERR_MEM / Error 12).
+        if (millis() - vt->lastSendDataTime < 1) {
+            return;
+        }
+        vt->lastSendDataTime = millis();
+
+        if (hasRotation) {
+            udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
+        }
+        if (hasAccel) {
+            udpClient->sendAcceleration(trackerIndex, ax, ay, az);
+        }
+        if (hasBattery && batt != -1) {
+            // Battery reporting is very infrequent in SlimeVR. 
+            // Only send every 30 seconds to avoid network flood.
+            if (millis() - vt->lastBatterySendTime > 30000) {
+                vt->lastBatterySendTime = millis();
+                
+                float percentage = (batt == 128) ? 100.0f : (batt & 127);
+                if (percentage > 100.0f) percentage = 100.0f;
+
+                float voltage = (batt_v >= 0) ? ((batt_v + 245.0f) / 100.0f) : 3.3f; 
+                udpClient->sendBattery(trackerIndex, voltage, percentage);
+            }
+        }
     }
   }
 }
