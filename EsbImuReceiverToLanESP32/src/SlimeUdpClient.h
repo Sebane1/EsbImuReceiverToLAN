@@ -34,7 +34,7 @@ public:
     bool isHandshakeSuccessful();
 
     VirtualTracker* getTracker(uint8_t trackerIndex) {
-        if(trackerIndex >= 12) return nullptr;
+        if(trackerIndex >= 16) return nullptr;
         return &_trackers[trackerIndex];
     }
 
@@ -50,7 +50,7 @@ private:
     bool _discoveryMode = true;
     int _protocolVersion;
 
-    VirtualTracker _trackers[12];
+    VirtualTracker _trackers[16];
 
     long nextPacketId(uint8_t trackerIndex);
     void sendHandshake(uint8_t trackerIndex, const char* firmwareVersion);

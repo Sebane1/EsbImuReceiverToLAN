@@ -221,7 +221,7 @@ void processHidData(SlimeUdpClient *udpClient,
 
     if (packetType == 255) {
       if (dongleIdToTrackerIndex.find(key) == dongleIdToTrackerIndex.end() &&
-          nextTrackerIndex < 11) {
+          nextTrackerIndex < 15) {
         DEBUG_PRINTF("New Device Registered: ID %d assigning Tracker Index %d\n", id, nextTrackerIndex);
         dongleIdToTrackerIndex[key] = nextTrackerIndex++;
       }
@@ -356,10 +356,9 @@ void processHidData(SlimeUdpClient *udpClient,
             continue;
         }
 
-        // Re-injecting the throttle: 1ms is effectively unthrottled but allows backoff.
-        // Prevents WiFi TX buffer exhaustion (ERR_MEM / Error 12).
+        // Delay packets to avoid overwhelming the hardware
         if (millis() - vt->lastSendDataTime < 1) {
-            return;
+            continue;
         }
         vt->lastSendDataTime = millis();
 
