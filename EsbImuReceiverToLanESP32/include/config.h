@@ -1,11 +1,11 @@
 #pragma once
 
-// Wi-Fi Configuration
-#define WIFI_SSID "Sebbos Wifi"
-#define WIFI_PASSWORD "1t2gmwn0"
+// Wi-Fi Configuration (Saved to NVS via Portal or Serial)
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
 
 // SlimeVR Server Configuration
-#define SLIMEVR_SERVER_IP "10.0.0.21" // Replace PC's IP address
+#define SLIMEVR_SERVER_IP ""
 #define SLIMEVR_SERVER_PORT 6969
 
 // Debug Output

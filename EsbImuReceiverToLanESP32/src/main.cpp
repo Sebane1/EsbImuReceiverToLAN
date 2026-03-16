@@ -4,70 +4,85 @@
 #include "config.h"
 #include "UsbHidHandler.h"
 #include "SlimeUdpClient.h"
+#include "WiFiManager.h"
+#include "SerialManager.h"
 
 UsbHidHandler usbHandler;
 SlimeUdpClient slimeClient;
 
 static bool wasConnected = false;
-static uint32_t lastConnectionCheck = 0;
-
-void setupWifi() {
-    DEBUG_PRINTLN();
-    DEBUG_PRINT("Connecting to WiFi: ");
-    DEBUG_PRINTLN(WIFI_SSID);
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-}
+static uint32_t lastLoopCheck = 0;
 
 void setup() {
     Serial.begin(115200);
-    // Wait for serial if you want, but better to proceed without it (since it's a dongle adapter)
     delay(2000); 
 
     DEBUG_PRINTLN("Starting EsbImuReceiverToLan ESP32 Port...");
 
-    setupWifi();
+    // Initialize Serial Manager FIRST to enable Native USB CDC logs
+    SerialManager::init();
+    
+    // Initialize WiFi (Connects and issues discovery logs)
+    WiFiManager::init();
 
-    // Initialize UDP Client
-    slimeClient.begin(SLIMEVR_SERVER_IP, SLIMEVR_SERVER_PORT);
+    // Initialize UDP Client with Server Discovery
+    // Passing no IP enables broadcast discovery mode
+    slimeClient.begin("", SLIMEVR_SERVER_PORT);
 }
 
 void loop() {
-    // Check WiFi Connection
-    if (millis() - lastConnectionCheck > 5000) {
-        lastConnectionCheck = millis();
-        bool isConnected = (WiFi.status() == WL_CONNECTED);
-        
+    // Process WiFi Portal (if active)
+    WiFiManager::loop();
+    
+    // Process Serial Commands (USB Provisioning)
+    SerialManager::loop();
+
+    // Check WiFi Connection for Data Flow
+    if (millis() - lastLoopCheck > 500) {
+        lastLoopCheck = millis();
+        static bool usbInitialized = false;
+        static uint32_t wifiConnectTime = 0;
+        bool isConnected = WiFiManager::isConnected();
+
         if (isConnected && !wasConnected) {
             wasConnected = true;
+            wifiConnectTime = millis();
             slimeClient.onWiFiConnect();
             
-            DEBUG_PRINTLN("");
-            DEBUG_PRINTLN("WiFi connected!");
+            DEBUG_PRINTLN("WiFi connected! Waiting for SlimeVR handshake before starting USB Host...");
             DEBUG_PRINT("IP address: ");
             DEBUG_PRINTLN(WiFi.localIP());
-            
-            // Initialize USB Host HID AFTER network is ready so we can log any crashes!
-            static bool usbInitialized = false;
-            if (!usbInitialized) {
+        } else if (!isConnected && wasConnected) {
+            DEBUG_PRINTLN("WiFi connection lost.");
+            wasConnected = false;
+            slimeClient.onWiFiDisconnect();
+            // We don't reset usbInitialized because once in Host mode, we stay there 
+            // until reboot, but we could reset it if we wanted to support hot-swap.
+            // For now, let's keep it simple.
+        }
+
+        // Deferred USB Host initialization
+        if (wasConnected && !usbInitialized) {
+            bool handshaked = slimeClient.isHandshakeSuccessful();
+            bool timedOut = (millis() - wifiConnectTime > 10000);
+
+            if (handshaked || timedOut) {
+                if (handshaked) {
+                    DEBUG_PRINTLN("Handshake successful! Switching Native USB to Host Mode.");
+                } else {
+                    DEBUG_PRINTLN("Handshake timeout (10s). Switching Native USB to Host Mode anyway.");
+                }
+                
+                // Shut down Native USB Serial (CDC) before starting USB Host
+                SerialManager::deinit();
+                
                 usbHandler.begin(&slimeClient);
                 usbInitialized = true;
             }
-            
-        } else if (!isConnected && wasConnected) {
-            DEBUG_PRINTLN("WiFi lost connection. Reconnecting...");
-            wasConnected = false;
-            slimeClient.onWiFiDisconnect();
-            WiFi.reconnect();
-        } else if (!isConnected && !wasConnected) {
-            DEBUG_PRINT("Still connecting to WiFi... Status: ");
-            DEBUG_PRINTLN(WiFi.status());
         }
     }
 
     if (wasConnected) {
-        // Run SlimeVR UDP Loop (Heartbeat, Retries, etc.)
         slimeClient.loop();
     }
 

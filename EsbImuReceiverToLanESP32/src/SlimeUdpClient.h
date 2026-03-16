@@ -31,9 +31,10 @@ public:
     void onWiFiConnect();
     void initializeTracker(uint8_t trackerIndex, const uint8_t mac[6], int imuType, int boardType, int mcuType, const char* firmwareVersion = "Bootleg Tracker ESB");
     void loop();
+    bool isHandshakeSuccessful();
 
     VirtualTracker* getTracker(uint8_t trackerIndex) {
-        if(trackerIndex >= 11) return nullptr;
+        if(trackerIndex >= 12) return nullptr;
         return &_trackers[trackerIndex];
     }
 
@@ -46,9 +47,10 @@ public:
 private:
     IPAddress _serverIp;
     uint16_t _serverPort;
+    bool _discoveryMode = true;
     int _protocolVersion;
 
-    VirtualTracker _trackers[11];
+    VirtualTracker _trackers[12];
 
     long nextPacketId(uint8_t trackerIndex);
     void sendHandshake(uint8_t trackerIndex, const char* firmwareVersion);

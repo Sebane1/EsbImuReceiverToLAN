@@ -1,5 +1,7 @@
 #include "SlimeUdpClient.h"
 #include "config.h"
+#include "SerialManager.h"
+#include <WiFi.h>
 #include <string.h>
 #include <vector>
 
@@ -16,34 +18,72 @@ SlimeUdpClient::SlimeUdpClient() {
 }
 
 void SlimeUdpClient::begin(const char *serverIp, uint16_t serverPort) {
-  _serverIp.fromString(serverIp);
+  if (serverIp && strlen(serverIp) > 0 && String(serverIp) != "0.0.0.0") {
+    _serverIp.fromString(serverIp);
+    _discoveryMode = false;
+  } else {
+    _discoveryMode = true;
+    _serverIp = IPAddress(0,0,0,0);
+  }
   _serverPort = serverPort;
-  randomSeed(micros()); // Seed randomness for dynamic port selection
+  randomSeed(micros());
   DEBUG_PRINTLN("SlimeUdpClient Initialized");
 }
 
+static bool _globalHandshakeSuccess = false;
+
+bool SlimeUdpClient::isHandshakeSuccessful() {
+    return _globalHandshakeSuccess;
+}
+
 void SlimeUdpClient::onWiFiDisconnect() {
-  for (int i = 0; i < 11; i++) {
-    if (_trackers[i].active) {
-      _trackers[i].udp.stop();
-    }
+  _discoveryMode = true;
+  _globalHandshakeSuccess = false;
+  DEBUG_PRINTLN("[SlimeVR] WiFi Disconnected, resetting handshake state.");
+  for (int i = 0; i < 12; i++) {
+    _trackers[i].isInitialized = false;
+    _trackers[i].handshakeOngoing = false;
+    _trackers[i].udp.stop(); // Always stop to be safe
   }
 }
 
 void SlimeUdpClient::onWiFiConnect() {
-  for (int i = 0; i < 11; i++) {
-    // Dynamic Port Randomization: Use random ephemeral ports to bypass "stuck" server states.
-    if (_trackers[i].active && i < 11) {
-      _trackers[i].lastSendDataTime = 0;
+  DEBUG_PRINTLN("[SlimeVR] WiFi Connected, preparing ritual trackers...");
+  _globalHandshakeSuccess = false; 
+  _discoveryMode = true; 
+  _serverIp = IPAddress(0,0,0,0); // Clear cached server IP for fresh discovery
+
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+
+  for (int i = 0; i < 12; i++) {
+    // reserve index 11 for the Hub tracker (the Stealth Probe)
+    if (i == 11) {
+        _trackers[i].active = true;
+        memcpy(_trackers[i].hardwareAddress, mac, 6);
+        _trackers[i].imuType = 0;
+        _trackers[i].boardType = 0;
+        _trackers[i].mcuType = 4;
+        strncpy(_trackers[i].firmware, "ESP32-Hub", 31);
+    }
+
+    if (_trackers[i].active) {
       _trackers[i].lastPacketReceivedTime = millis();
+      _trackers[i].lastHeartbeatTime = millis();
+      _trackers[i].lastSendDataTime = 0;
       _trackers[i].lastBatterySendTime = 0;
       _trackers[i].lastErrMemTime = 0;
       _trackers[i].handshakeRetryCount = 0;
-      _trackers[i].imuType = 0;
-      uint16_t randomPort = 50000 + random(0, 10000);
-      _trackers[i].udp.begin(randomPort); 
-      _trackers[i].handshakeOngoing = true; // Force handshake on reconnect
       _trackers[i].isInitialized = false;
+      _trackers[i].handshakeOngoing = true;
+      _trackers[i].lastHandshakeTime = 0;
+      _trackers[i].packetId = 0; // Reset packet sequence for new session
+      
+      uint16_t randomPort = 50000 + random(0, 10000);
+      _trackers[i].udp.stop();
+      if (!_trackers[i].udp.begin(randomPort)) {
+          DEBUG_PRINTF("FAILED to bind UDP port %d for Tracker %d\n", randomPort, i);
+      }
     }
   }
 }
@@ -51,7 +91,7 @@ void SlimeUdpClient::onWiFiConnect() {
 void SlimeUdpClient::initializeTracker(uint8_t trackerIndex,
                                        const uint8_t mac[6], int imuType, int boardType, int mcuType,
                                        const char *firmwareVersion) {
-  if (trackerIndex >= 11)
+  if (trackerIndex >= 12)
     return;
   VirtualTracker &vt = _trackers[trackerIndex];
   if (vt.active)
@@ -71,7 +111,7 @@ void SlimeUdpClient::initializeTracker(uint8_t trackerIndex,
   vt.lastHandshakeTime = millis();
 
   // ONLY bind the socket if we are under the hardware limit of ~16 sockets
-  if (trackerIndex < 11) {
+  if (trackerIndex < 12) {
       uint16_t randomPort = 50000 + random(0, 10000);
       vt.udp.begin(randomPort);
   }
@@ -80,46 +120,32 @@ void SlimeUdpClient::initializeTracker(uint8_t trackerIndex,
 }
 
 void SlimeUdpClient::loop() {
-  for (int i = 0; i < 11; i++) {
+  for (int i = 0; i < 12; i++) {
     VirtualTracker &vt = _trackers[i];
     if (!vt.active)
       continue;
 
     if (vt.handshakeOngoing) {
-      // Sequential Handshake: Only one tracker handshakes at a time.
-      // A tracker only attempts its handshake if all active trackers with a lower index are already initialized.
-      bool lowerTrackersPending = false;
-      for (int prev = 0; prev < i; prev++) {
-          if (_trackers[prev].active && !_trackers[prev].isInitialized) {
-              lowerTrackersPending = true;
-              break;
+      uint32_t now = millis();
+      // Staggered handshake: All trackers handshake in parallel, but with slightly different base intervals
+      // to avoid overwhelming the server stack with simultaneous discovery bursts.
+      if (now - vt.lastHandshakeTime > (1000 + (i * 20))) {
+          vt.lastHandshakeTime = now;
+          vt.handshakeRetryCount++;
+          
+          if (vt.handshakeRetryCount % 10 == 0) {
+              uint16_t newPort = 50000 + random(0, 10000);
+              DEBUG_PRINTF("Resetting socket for Tracker %d (New Port: %d) after %d retries\n", i, newPort, vt.handshakeRetryCount);
+              vt.udp.stop();
+              vt.udp.begin(newPort);
           }
-      }
-
-      if (!lowerTrackersPending) {
-        // Stagger handshakes: 500ms + trackerIndex * 50ms
-        // Increased aggression to ensure SlimeVR server picks up the connection.
-        if (millis() - vt.lastHandshakeTime > (500 + (i * 50))) {
-          if (isNetworkReady(i)) { // Don't send if network is congested
-              vt.lastHandshakeTime = millis();
-              vt.handshakeRetryCount++;
-              
-              // If we've retried 10 times without success, reset the socket and LEAP to a new random port.
-              // This clears potential "stuck" states and bypasses port-specific blocks.
-              if (vt.handshakeRetryCount % 10 == 0) {
-                  uint16_t newPort = 50000 + random(0, 10000);
-                  DEBUG_PRINTF("Resetting socket for Tracker %d (New Port: %d) after %d retries\n", i, newPort, vt.handshakeRetryCount);
-                  vt.udp.stop();
-                  vt.udp.begin(newPort);
-              }
-              
-              sendHandshake(i, vt.firmware);
-          }
-        }
+          
+          DEBUG_PRINTF("Sending Handshake for Tracker %d (Try %d)\n", i, vt.handshakeRetryCount);
+          sendHandshake(i, vt.firmware);
       }
     }
 
-    if (vt.isInitialized && (millis() - vt.lastPacketReceivedTime > 4000)) {
+    if (vt.isInitialized && (millis() - vt.lastPacketReceivedTime > 5000)) {
         DEBUG_PRINTF("Connection TIMEOUT for Tracker %d - Re-verifying server\n", i);
         vt.isInitialized = false;
         vt.handshakeOngoing = true;
@@ -127,7 +153,9 @@ void SlimeUdpClient::loop() {
         vt.lastHandshakeTime = 0;
     }
 
-    if (millis() - vt.lastHeartbeatTime > 900) {
+    // Heartbeat: Send every 900ms to keep the connection alive.
+    // Stealth Hub (Index 11) skips regular heartbeats once initialized to stay invisible.
+    if (vt.isInitialized && i != 11 && (millis() - vt.lastHeartbeatTime > 900)) {
       if (isNetworkReady(i)) {
           vt.lastHeartbeatTime = millis();
           sendHeartbeat(i);
@@ -139,7 +167,7 @@ void SlimeUdpClient::loop() {
   // Removed 10ms throttle to avoid backlogged replies
   {
     // Parse ALL incoming packets for trackers to avoid LWIP buffer exhaustion
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < 12; i++) {
       VirtualTracker &vt = _trackers[i];
       if (!vt.active) continue;
 
@@ -152,6 +180,15 @@ void SlimeUdpClient::loop() {
           // Diagnostic: Show where the packet came from
           if (vt.handshakeOngoing) {
               DEBUG_PRINTF("Got %d bytes from %s:%d on Tracker %d\n", len, vt.udp.remoteIP().toString().c_str(), vt.udp.remotePort(), i);
+          }
+          
+          if (_discoveryMode) {
+              _serverIp = vt.udp.remoteIP();
+              _discoveryMode = false;
+              _globalHandshakeSuccess = true;
+              DEBUG_PRINT("[SlimeVR] Found Server at: ");
+              DEBUG_PRINTLN(_serverIp);
+              SerialManager::logToActivePorts("Handshake successful"); // For SlimeVR Provisioning Wizard
           }
           
           vt.lastPacketReceivedTime = millis();
@@ -179,27 +216,37 @@ void SlimeUdpClient::loop() {
               continue;
           }
 
-          // For Handshakes, SlimeVR server responds with "Hey OVR =D 5"
-          // Use raw memory search instead of String to avoid strlen() crash in ROM
+          // Handshake detection: support both 4-byte BE (packetType == 3) and 1-byte headers (buffer[0] == 3)
           const char* needle = "Hey OVR =D 5";
           int needleLen = 12;
-          bool found = false;
-          if (buffer[0] == 3) { // Handshake type
+          bool isHandshakeResponse = false;
+          
+          if (packetType == 3 || buffer[0] == 3) {
               for (int j = 0; j <= len - needleLen; j++) {
                 if (memcmp(buffer + j, needle, needleLen) == 0) {
-                  found = true;
+                  isHandshakeResponse = true;
                   break;
                 }
               }
           }
-          if (found) {
+
+          if (isHandshakeResponse) {
              if (vt.handshakeOngoing) {
                 vt.handshakeOngoing = false;
                 vt.isInitialized = true;
                 vt.lastPacketReceivedTime = millis();
-                DEBUG_PRINTF("Handshake SUCCESS for Tracker %d - Sending confirmation\n", i);
-                sendHandshake(i, vt.firmware); // Second handshake as required
-                addTracker(i, vt.imuType, vt.firmware);
+                
+                // Per user request: Hub tracker (11) doesn't need to show up in SlimeVR server.
+                // We just use it to confirm the server connection and advance the state machine.
+                if (i == 11) {
+                    DEBUG_PRINTLN("[SlimeVR] Hub/System handshake successful (Internal Only)");
+                    _globalHandshakeSuccess = true;
+                    // Do NOT call addTracker(11, ...)
+                } else {
+                    DEBUG_PRINTF("Handshake SUCCESS for Tracker %d - Sending confirmation\n", i);
+                    sendHandshake(i, vt.firmware); // Second handshake as required
+                    addTracker(i, vt.imuType, vt.firmware);
+                }
              }
           }
         }
@@ -209,7 +256,7 @@ void SlimeUdpClient::loop() {
 }
 
 bool SlimeUdpClient::isNetworkReady(uint8_t trackerIndex) {
-  if (trackerIndex >= 11 || !_trackers[trackerIndex].active) return false;
+  if (trackerIndex >= 12 || !_trackers[trackerIndex].active) return false;
   
   uint32_t lastErr = _trackers[trackerIndex].lastErrMemTime;
   if (lastErr == 0) return true; // No errors yet, always ready
@@ -222,13 +269,13 @@ bool SlimeUdpClient::isNetworkReady(uint8_t trackerIndex) {
 }
 
 long SlimeUdpClient::nextPacketId(uint8_t trackerIndex) {
-  if (trackerIndex >= 11)
+  if (trackerIndex >= 12)
     return 0;
   return _trackers[trackerIndex].packetId++;
 }
 
 void SlimeUdpClient::sendHeartbeat(uint8_t trackerIndex) {
-  if (trackerIndex >= 11 || !_trackers[trackerIndex].active)
+  if (trackerIndex >= 12 || !_trackers[trackerIndex].active)
     return;
   uint8_t buffer[13];
   int offset = 0;
@@ -263,7 +310,7 @@ void SlimeUdpClient::sendHeartbeat(uint8_t trackerIndex) {
 
 void SlimeUdpClient::sendHandshake(uint8_t trackerIndex,
                                    const char *firmwareVersion) {
-  if (trackerIndex >= 11 || !_trackers[trackerIndex].active)
+  if (trackerIndex >= 12 || !_trackers[trackerIndex].active)
     return;
   VirtualTracker &vt = _trackers[trackerIndex];
   uint8_t buffer[256];
@@ -316,26 +363,42 @@ void SlimeUdpClient::sendHandshake(uint8_t trackerIndex,
     buffer[offset++] = vt.hardwareAddress[i];
   }
 
-  if (!_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort)) return;
-  _trackers[trackerIndex].udp.write(buffer, offset);
-  _trackers[trackerIndex].udp.endPacket();
-  
-  // Burst: Send twice but with a tiny gap to ensure the server stack can handle it.
-  delayMicroseconds(500);
-  
-  if (!_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort)) return;
-  _trackers[trackerIndex].udp.write(buffer, offset);
-  if (!_trackers[trackerIndex].udp.endPacket()) {
-    _trackers[trackerIndex].lastErrMemTime = millis();
-    DEBUG_PRINTF("Handshake burst FAILED (ERR_MEM) for Tracker %d\n", trackerIndex);
+  if (_discoveryMode) {
+    // Dual Broadcast: Send to both global and subnet-specific broadcast addresses.
+    // This bypasses router restrictions on directed broadcast packets.
+    IPAddress subnetBroadcast = WiFi.broadcastIP();
+    
+    if (_trackers[trackerIndex].udp.beginPacket(IPAddress(255, 255, 255, 255), _serverPort)) {
+        _trackers[trackerIndex].udp.write(buffer, offset);
+        _trackers[trackerIndex].udp.endPacket();
+    }
+
+    if (subnetBroadcast != IPAddress(255, 255, 255, 255)) {
+        if (_trackers[trackerIndex].udp.beginPacket(subnetBroadcast, _serverPort)) {
+            _trackers[trackerIndex].udp.write(buffer, offset);
+            _trackers[trackerIndex].udp.endPacket();
+        }
+    }
   } else {
-    DEBUG_PRINTF("Sent Handshake (Burst) to SlimeVR for Tracker %d!\n", trackerIndex);
+    // Known Server: Send directed handshake
+    if (!_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort)) return;
+    _trackers[trackerIndex].udp.write(buffer, offset);
+    if (!_trackers[trackerIndex].udp.endPacket()) {
+      _trackers[trackerIndex].lastErrMemTime = millis();
+    }
+
+    // Burst: Send twice but with a tiny gap to ensure the server stack can handle it.
+    delayMicroseconds(500);
+    if (_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort)) {
+        _trackers[trackerIndex].udp.write(buffer, offset);
+        _trackers[trackerIndex].udp.endPacket();
+    }
   }
 }
 
 void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType,
                                 const char *firmwareVersion) {
-  if (trackerIndex >= 11 || !_trackers[trackerIndex].active)
+  if (trackerIndex >= 12 || !_trackers[trackerIndex].active)
     return;
   uint8_t buffer[20];
   int offset = 0;
@@ -379,7 +442,7 @@ void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType,
 
 void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy,
                                   float qz, float qw) {
-  if (trackerIndex >= 11 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
+  if (trackerIndex >= 12 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
     return;
   uint8_t buffer[35];
   int offset = 0;
@@ -438,7 +501,7 @@ void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy,
 
 void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay,
                                       float az) {
-  if (trackerIndex >= 11 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
+  if (trackerIndex >= 12 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
     return;
   uint8_t buffer[30];
   int offset = 0;
@@ -488,7 +551,7 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay,
 
 void SlimeUdpClient::sendBattery(uint8_t trackerIndex, float voltage,
                                  float batteryPercentage) {
-  if (trackerIndex >= 11 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
+  if (trackerIndex >= 12 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
     return;
   uint8_t buffer[24];
   int offset = 0;
