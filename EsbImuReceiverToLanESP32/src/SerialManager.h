@@ -8,6 +8,8 @@ public:
     static void deinit();
     static void loop();
     static void logToActivePorts(String message);
+    static void logHeapStatus();
+
 
 private:
     static void processCommand(String line, Stream& port);

@@ -40,7 +40,23 @@ void SerialManager::logToActivePorts(String message) {
     #endif
 }
 
+void SerialManager::logHeapStatus() {
+    static uint32_t lastLogged = 0;
+    if (millis() - lastLogged < 1000) return;
+    lastLogged = millis();
+    uint32_t free = esp_get_free_heap_size();
+    uint32_t min_ever = esp_get_minimum_free_heap_size();
+    logToActivePorts("HEAP: Free=" + String(free) + " MinEver=" + String(min_ever));
+}
+
+
 void SerialManager::loop() {
+    static uint32_t lastHeapLog = 0;
+    if (millis() - lastHeapLog > 5000) {
+        lastHeapLog = millis();
+        logHeapStatus();
+    }
+
     // Check Hardware UART
     if (Serial.available()) {
         String line = Serial.readStringUntil('\n');

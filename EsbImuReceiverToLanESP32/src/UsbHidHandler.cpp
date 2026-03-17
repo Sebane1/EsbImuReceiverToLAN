@@ -27,7 +27,11 @@ typedef struct {
     size_t length;
 } hid_report_t;
 
+#define HID_REPORT_POOL_SIZE 32
+static hid_report_t hid_report_pool[HID_REPORT_POOL_SIZE];
 static QueueHandle_t hid_data_queue = NULL;
+static QueueHandle_t free_report_queue = NULL;
+
 
 static void
 hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
@@ -38,20 +42,33 @@ hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
   ESP_ERROR_CHECK(hid_host_device_get_params(hid_device_handle, &dev_params));
 
   switch (event) {
-  case HID_HOST_INTERFACE_EVENT_INPUT_REPORT:
-    ESP_ERROR_CHECK(hid_host_device_get_raw_input_report_data(
-        hid_device_handle, data, 64, &data_length));
-    
-    if (hid_data_queue && data_length > 0) {
-        hid_report_t report;
-        report.hid_device = hid_device_handle;
-        report.length = (data_length > sizeof(report.data)) ? sizeof(report.data) : data_length;
-        memcpy(report.data, data, report.length);
-        if (xQueueSend(hid_data_queue, &report, 0) != pdTRUE) {
-            // Drop silently to avoid blocking Core 0
+  case HID_HOST_INTERFACE_EVENT_INPUT_REPORT: {
+    if (!hid_data_queue || !free_report_queue) break;
+
+    hid_report_t* report = NULL;
+    // Pop a free buffer pointer from the pool queue
+    if (xQueueReceive(free_report_queue, &report, 0) == pdTRUE) {
+        size_t data_length = 0;
+        esp_err_t err = hid_host_device_get_raw_input_report_data(
+            hid_device_handle, report->data, 64, &data_length);
+        
+        if (err == ESP_OK && data_length > 0) {
+            report->hid_device = hid_device_handle;
+            report->length = (data_length > 64) ? 64 : data_length;
+            
+            // Send the pointer to the data queue
+            if (xQueueSend(hid_data_queue, &report, 0) != pdTRUE) {
+                // Data queue full, return to free pool
+                xQueueSend(free_report_queue, &report, 0);
+            }
+        } else {
+            // Error or no data, return buffer to free pool
+            xQueueSend(free_report_queue, &report, 0);
         }
     }
     break;
+  }
+
   case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
     DEBUG_PRINTLN("HID Device DISCONNECTED");
     ESP_ERROR_CHECK(hid_host_device_close(hid_device_handle));
@@ -154,9 +171,17 @@ UsbHidHandler::UsbHidHandler() { _udpClient = nullptr; }
 void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
   _udpClient = udpClient;
   g_udpClient = udpClient;
+  
+  // Create queues to hold POINTERS to buffers (minimizes copying)
+  hid_data_queue = xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t*));
+  free_report_queue = xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t*));
 
-  // Create queue for HID reports (30 entries × ~76 bytes = ~2.3KB)
-  hid_data_queue = xQueueCreate(30, sizeof(hid_report_t));
+  // Pre-seed the free queue with pointers to ALL buffers in our pre-allocated pool
+  for (int i = 0; i < HID_REPORT_POOL_SIZE; i++) {
+      hid_report_t* report = &hid_report_pool[i];
+      xQueueSend(free_report_queue, &report, 0);
+  }
+
 
   BaseType_t task_created =
       xTaskCreatePinnedToCore(usb_lib_task, "usb_events", 4096,
@@ -182,14 +207,18 @@ void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
 }
 
 void UsbHidHandler::loop() {
-    if (!hid_data_queue || !_udpClient) return;
+    if (!hid_data_queue || !free_report_queue || !_udpClient) return;
 
-    hid_report_t report;
-    // Process all pending packets off the queue on the Arduino Core 1
+    hid_report_t* report = NULL;
+    // Process all pending report pointers off the data queue
     while (xQueueReceive(hid_data_queue, &report, 0) == pdTRUE) {
-        processHidData(_udpClient, report.hid_device, report.data, report.length);
+        processHidData(_udpClient, report->hid_device, report->data, report->length);
+        
+        // Recycling: Push the pointer back to the free queue for reuse by the USB stack
+        xQueueSend(free_report_queue, &report, 0);
     }
 }
+
 
 // Below is the translated parser logic from TrackersHID.cs
 // Call this function from your USB HID IN Report callback
@@ -351,16 +380,8 @@ void processHidData(SlimeUdpClient *udpClient,
     // should now prevent crashes even at raw 500Hz-1000Hz update rates.
     VirtualTracker* vt = udpClient->getTracker(trackerIndex);
     if (vt) {
-        // Drop data if we are in a backoff period from ERR_MEM (Error 12)
-        if (!udpClient->isNetworkReady(trackerIndex)) {
-            continue;
-        }
-
-        // Delay packets to avoid overwhelming the hardware
-        if (millis() - vt->lastSendDataTime < 1) {
-            continue;
-        }
         vt->lastSendDataTime = millis();
+
 
         if (hasRotation) {
             udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
