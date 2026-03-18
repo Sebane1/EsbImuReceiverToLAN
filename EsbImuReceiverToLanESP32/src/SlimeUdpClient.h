@@ -19,6 +19,13 @@ struct VirtualTracker {
     int boardType = 0;
     int mcuType = 0;
     char firmware[32] = {0};
+    
+    // Previous state for movement thresholding
+    float last_qx = 0, last_qy = 0, last_qz = 0, last_qw = 1.0f;
+    float last_ax = 0, last_ay = 0, last_az = 0;
+    uint32_t lastMovementPacketTime = 0;
+    uint8_t updateCounter = 0;
+
     WiFiUDP udp;
 };
 

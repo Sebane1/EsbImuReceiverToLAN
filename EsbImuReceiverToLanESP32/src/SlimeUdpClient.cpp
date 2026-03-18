@@ -294,11 +294,12 @@ void SlimeUdpClient::sendHeartbeat(uint8_t trackerIndex) {
   _trackers[trackerIndex].udp.write(_bufHeartbeat, offset);
 
   if (!_trackers[trackerIndex].udp.endPacket()) {
-    SerialManager::logHeapStatus();
-
+    static uint32_t lastErrorLog = 0;
+    if (millis() - lastErrorLog > 10000) {
+        SerialManager::logHeapStatus();
+        lastErrorLog = millis();
+    }
   }
-
-
 }
 
 void SlimeUdpClient::sendHandshake(uint8_t trackerIndex,
@@ -379,7 +380,11 @@ void SlimeUdpClient::sendHandshake(uint8_t trackerIndex,
     if (!_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort)) return;
     _trackers[trackerIndex].udp.write(_bufHandshake, offset);
     if (!_trackers[trackerIndex].udp.endPacket()) {
-      SerialManager::logHeapStatus();
+      static uint32_t lastErrorLog = 0;
+      if (millis() - lastErrorLog > 10000) {
+          SerialManager::logHeapStatus();
+          lastErrorLog = millis();
+      }
     }
 
 
@@ -431,8 +436,11 @@ void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType,
   _trackers[trackerIndex].udp.write(_bufSensorInfo, offset);
 
   if (!_trackers[trackerIndex].udp.endPacket()) {
-    SerialManager::logHeapStatus();
-
+    static uint32_t lastErrorLog = 0;
+    if (millis() - lastErrorLog > 10000) {
+        SerialManager::logHeapStatus();
+        lastErrorLog = millis();
+    }
   }
 
 
@@ -444,6 +452,23 @@ void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy,
                                   float qz, float qw) {
   if (trackerIndex >= 16 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
     return;
+
+  VirtualTracker &vt = _trackers[trackerIndex];
+
+  // Rate Cap (Optimization)
+  // Ensure we don't send data more than once every 4ms (Allows 100Hz Rotation + 100Hz Accel interleaved)
+  if (millis() - vt.lastMovementPacketTime < 4) {
+      return;
+  }
+
+  // Movement Thresholding for Rotation (Dot product of 4D vectors)
+  // If the change is small enough, and we sent a packet recently, skip this one.
+  float dot = (qx * vt.last_qx) + (qy * vt.last_qy) + (qz * vt.last_qz) + (qw * vt.last_qw);
+  float diff = 1.0f - abs(dot);
+  if (diff < MOVEMENT_THRESHOLD_QUAT && (millis() - vt.lastMovementPacketTime < 500)) {
+      return;
+  }
+
   int offset = 0;
 
   int packetType = 17; // ROTATION_DATA
@@ -495,7 +520,23 @@ void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy,
   _trackers[trackerIndex].udp.write(_bufRotation, offset);
 
   if (!_trackers[trackerIndex].udp.endPacket()) {
-    SerialManager::logHeapStatus();
+    int errorCode = errno;
+    if (errorCode == 12) { // ENOMEM
+        static uint32_t lastErrorLog = 0;
+        if (millis() - lastErrorLog > 10000) {
+            DEBUG_PRINTLN("[SlimeVR] Error 12 (ENOMEM) on Rotation Packet - TX Buffers Full");
+            SerialManager::logHeapStatus(); // Log heap status ONLY within the throttled block
+            lastErrorLog = millis();
+        }
+    }
+  } else {
+    // Update last state only on successful send
+    VirtualTracker &vt = _trackers[trackerIndex];
+    vt.last_qx = qx;
+    vt.last_qy = qy;
+    vt.last_qz = qz;
+    vt.last_qw = qw;
+    vt.lastMovementPacketTime = millis();
   }
 }
 
@@ -503,6 +544,23 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay,
                                       float az) {
   if (trackerIndex >= 16 || !_trackers[trackerIndex].active || !_trackers[trackerIndex].isInitialized)
     return;
+
+  VirtualTracker &vt = _trackers[trackerIndex];
+
+  // Rate Cap (Optimization)
+  if (millis() - vt.lastMovementPacketTime < 4) {
+      return;
+  }
+
+  // Movement Thresholding for Acceleration (Euclidean distance)
+  float dx = ax - vt.last_ax;
+  float dy = ay - vt.last_ay;
+  float dz = az - vt.last_az;
+  float distSq = (dx * dx) + (dy * dy) + (dz * dz);
+  if (distSq < (MOVEMENT_THRESHOLD_ACCEL * MOVEMENT_THRESHOLD_ACCEL) && (millis() - vt.lastMovementPacketTime < 500)) {
+      return;
+  }
+
   int offset = 0;
 
   int packetType = 4; // ACCELERATION
@@ -545,7 +603,22 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay,
   _trackers[trackerIndex].udp.write(_bufAcceleration, offset);
 
   if (!_trackers[trackerIndex].udp.endPacket()) {
-    SerialManager::logHeapStatus();
+    int errorCode = errno;
+    if (errorCode == 12) { // ENOMEM
+        static uint32_t lastErrorLog = 0;
+        if (millis() - lastErrorLog > 10000) {
+            DEBUG_PRINTLN("[SlimeVR] Error 12 (ENOMEM) on Acceleration Packet - TX Buffers Full");
+            SerialManager::logHeapStatus(); // Log heap status ONLY within the throttled block
+            lastErrorLog = millis();
+        }
+    }
+  } else {
+    // Update last state only on successful send
+    VirtualTracker &vt = _trackers[trackerIndex];
+    vt.last_ax = ax;
+    vt.last_ay = ay;
+    vt.last_az = az;
+    vt.lastMovementPacketTime = millis();
   }
 }
 
@@ -590,7 +663,11 @@ void SlimeUdpClient::sendBattery(uint8_t trackerIndex, float voltage,
   _trackers[trackerIndex].udp.write(_bufBattery, offset);
 
   if (!_trackers[trackerIndex].udp.endPacket()) {
-    SerialManager::logHeapStatus();
+    static uint32_t lastErrorLog = 0;
+    if (millis() - lastErrorLog > 10000) {
+        SerialManager::logHeapStatus();
+        lastErrorLog = millis();
+    }
   }
 }
 

@@ -23,6 +23,7 @@ void WiFiManager::init() {
         DEBUG_PRINT("Connecting to stored WiFi: ");
         DEBUG_PRINTLN(ssid);
         WiFi.begin(ssid, pass);
+        WiFi.setSleep(false); // Disable Power Save for low-latency UDP
     } else {
         DEBUG_PRINTLN("No stored credentials. Starting Captive Portal...");
         startCaptivePortal();

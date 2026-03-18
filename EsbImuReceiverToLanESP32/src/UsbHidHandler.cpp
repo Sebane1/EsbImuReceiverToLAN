@@ -234,10 +234,9 @@ void processHidData(SlimeUdpClient *udpClient,
     return; // Malformed
   }
 
-  // A map to keep track of which (dongle, hardware ID) maps to which
-  // trackerIndex (0-39)
-  static std::map<std::pair<hid_host_device_handle_t, uint8_t>, uint8_t>
-      dongleIdToTrackerIndex;
+  // A map to keep track of which hardware ID maps to which trackerIndex (0-39)
+  // Handle-Agnostic: We use only the 1-byte ESB 'id' as the key.
+  static std::map<uint8_t, uint8_t> dongleIdToTrackerIndex;
   static uint8_t nextTrackerIndex = 0;
   static uint8_t storedMacs[40][6] = {0};
 
@@ -246,30 +245,27 @@ void processHidData(SlimeUdpClient *udpClient,
     uint8_t packetType = dataReceived[i];
     uint8_t id = dataReceived[i + 1];
 
-    std::pair<hid_host_device_handle_t, uint8_t> key = {hid_device, id};
-
     if (packetType == 255) {
-      if (dongleIdToTrackerIndex.find(key) == dongleIdToTrackerIndex.end() &&
+      if (dongleIdToTrackerIndex.find(id) == dongleIdToTrackerIndex.end() &&
           nextTrackerIndex < 15) {
         DEBUG_PRINTF("New Device Registered: ID %d assigning Tracker Index %d\n", id, nextTrackerIndex);
-        dongleIdToTrackerIndex[key] = nextTrackerIndex++;
+        dongleIdToTrackerIndex[id] = nextTrackerIndex++;
       }
 
-      if (dongleIdToTrackerIndex.find(key) != dongleIdToTrackerIndex.end()) {
-        uint8_t tIdx = dongleIdToTrackerIndex[key];
+      if (dongleIdToTrackerIndex.find(id) != dongleIdToTrackerIndex.end()) {
+        uint8_t tIdx = dongleIdToTrackerIndex[id];
         // MAC Address is in bytes 2-7
         memcpy(storedMacs[tIdx], &dataReceived[i + 2], 6);
       }
       continue;
     }
 
-    if (dongleIdToTrackerIndex.find(key) == dongleIdToTrackerIndex.end()) {
-      // We haven't seen a register packet for this dongle's tracker ID yet,
-      // ignore data
+    if (dongleIdToTrackerIndex.find(id) == dongleIdToTrackerIndex.end()) {
+      // We haven't seen a register packet for this tracker ID yet, ignore data
       continue;
     }
 
-    uint8_t trackerIndex = dongleIdToTrackerIndex[key];
+    uint8_t trackerIndex = dongleIdToTrackerIndex[id];
 
     if (packetType == 0) {
       uint8_t imuId = dataReceived[i + 8];
@@ -382,13 +378,19 @@ void processHidData(SlimeUdpClient *udpClient,
     if (vt) {
         vt->lastSendDataTime = millis();
 
+        // PPS Reduction: Alternate between Rotation and Acceleration
+        // instead of sending both every frame (halves packet pressure)
+        if (vt->updateCounter % 2 == 0) {
+            if (hasRotation) {
+                udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
+            }
+        } else {
+            if (hasAccel) {
+                udpClient->sendAcceleration(trackerIndex, ax, ay, az);
+            }
+        }
+        vt->updateCounter++;
 
-        if (hasRotation) {
-            udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
-        }
-        if (hasAccel) {
-            udpClient->sendAcceleration(trackerIndex, ax, ay, az);
-        }
         if (hasBattery && batt != -1) {
             // Battery reporting is very infrequent in SlimeVR. 
             // Only send every 30 seconds to avoid network flood.
@@ -402,6 +404,10 @@ void processHidData(SlimeUdpClient *udpClient,
                 udpClient->sendBattery(trackerIndex, voltage, percentage);
             }
         }
+
+        // Staggering: Give the Wi-Fi driver time to handle each packet
+        // to prevent filling the internal hardware queue too fast.
+        delayMicroseconds(400);
     }
   }
 }
