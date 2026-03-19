@@ -26,6 +26,19 @@ public partial class MainPage : ContentPage
         _ = typeof(TrackerUsbReceiver);
         TrackerUsbReceiver.OnDeviceConnected += OnDeviceConnected;
         TrackerUsbReceiver.OnDeviceDisconnected += OnDeviceDisconnected;
+        SlimeImuProtocol.SlimeVR.UDPHandler.OnServerDiscovered += OnServerDiscovered;
+    }
+
+    private void OnServerDiscovered(object? sender, string ip)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (string.IsNullOrWhiteSpace(ipEntry.Text) || ipEntry.Text == "255.255.255.255")
+            {
+                ipEntry.Text = ip;
+                File.WriteAllText(Path.Combine(FileSystem.AppDataDirectory, "config.txt"), ip);
+            }
+        });
     }
 
     protected override void OnAppearing()
@@ -196,17 +209,29 @@ public partial class MainPage : ContentPage
         if (!_isTrackerServiceStarted)
         {
             intent = new Intent(context, typeof(TrackerListenerService));
-            var endpoint = ipEntry.Text;
-            if (IPAddress.TryParse(endpoint ?? "", out _))
+            var endpoint = ipEntry.Text?.Trim();
+            
+            if (string.IsNullOrWhiteSpace(endpoint))
             {
-                UDPHandler.Endpoint = endpoint!;
-                File.WriteAllText(Path.Combine(FileSystem.AppDataDirectory, "config.txt"), endpoint);
-                statusLabel.Text = "Starting...";
+                endpoint = "255.255.255.255";
+            }
+
+            if (IPAddress.TryParse(endpoint, out _))
+            {
+                UDPHandler.Endpoint = endpoint;
+                if (endpoint != "255.255.255.255")
+                {
+                    File.WriteAllText(Path.Combine(FileSystem.AppDataDirectory, "config.txt"), endpoint);
+                }
+
+                statusLabel.Text = (endpoint == "255.255.255.255") ? "Discovering..." : "Starting...";
                 statusLabel.TextColor = Colors.LightGreen;
+
                 if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.O)
                     context.StartForegroundService(intent);
                 else
                     context.StartService(intent);
+
                 _isTrackerServiceStarted = true;
                 startButton.Text = "Stop";
             }

@@ -7,6 +7,7 @@ using SlimeImuProtocol.SlimeVR;
 using System.Text;
 using SlimeImuProtocol.Utility;
 using SlimeImuProtocol;
+using SlimeImuProtocol.SlimeProtocol;
 
 namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 {
@@ -19,11 +20,11 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         private readonly List<TrackerDevice> devices = new();
         private readonly Dictionary<string, List<int>> devicesBySerial = new();
         private readonly Dictionary<HidDevice, List<int>> devicesByHID = new();
-        private readonly Dictionary<HidDevice, int> lastDataByHID = new();
+        private readonly Dictionary<string, Thread> deviceReadThreads = new();
+        private bool disposed = false;
 
         private readonly HidDeviceLoader hidLoader;
         private readonly FunctionSequenceManager _functionSequenceManager;
-        private readonly Thread dataReadThread;
         private readonly Thread deviceEnumerateThread;
 
         public Quaternion AXES_OFFSET { get; internal set; }
@@ -35,13 +36,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
             hidLoader = new HidDeviceLoader();
 
             _functionSequenceManager = new FunctionSequenceManager();
-
-            dataReadThread = new Thread(DataRead)
-            {
-                IsBackground = true,
-                Name = "hidsharp data reader"
-            };
-            dataReadThread.Start();
 
             deviceEnumerateThread = new Thread(DeviceEnumerateLoop)
             {
@@ -98,16 +92,26 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 var list = new List<int>();
                 devicesBySerial[serial] = list;
                 devicesByHID[hidDevice] = list;
-                lastDataByHID[hidDevice] = 0;
 
                 Console.WriteLine($"[TrackerServer] (Probably) Compatible HID device detected: {serial}");
+
+                var readThread = new Thread(() => DataReadLoop(hidDevice))
+                {
+                    IsBackground = true,
+                    Name = $"HID Read {serial}"
+                };
+                lock (deviceReadThreads)
+                {
+                    deviceReadThreads[serial] = readThread;
+                }
+                readThread.Start();
             }
         }
 
         private void DeviceEnumerateLoop()
         {
             Thread.Sleep(100); // Delayed start
-            while (true)
+            while (!disposed)
             {
                 Thread.Sleep(1000);
                 DeviceEnumerate();
@@ -126,15 +130,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     RemoveDevice(device);
                 }
 
-                foreach (var device in devicesByHID.Keys)
-                {
-                    if (lastDataByHID.TryGetValue(device, out int age) && age > 100)
-                    {
-                        Console.WriteLine($"[TrackerServer] Reopening device {device.GetSerialNumber()} after no data received");
-                        device.TryOpen(out _);
-                    }
-                }
-
                 foreach (var device in allDevices)
                 {
                     if (!devicesByHID.ContainsKey(device))
@@ -146,6 +141,16 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         }
         private void RemoveDevice(HidDevice device)
         {
+            string serial = device.GetSerialNumber() ?? "Unknown";
+            lock (deviceReadThreads)
+            {
+                if (deviceReadThreads.TryGetValue(serial, out var thread))
+                {
+                    try { thread.Interrupt(); } catch { }
+                    deviceReadThreads.Remove(serial);
+                }
+            }
+
             if (devicesByHID.TryGetValue(device, out var ids))
             {
                 lock (devices)
@@ -163,7 +168,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     }
                 }
                 devicesByHID.Remove(device);
-                Console.WriteLine($"[TrackerServer] Linked HID device removed: {device.GetSerialNumber()}");
+                Console.WriteLine($"[TrackerServer] Linked HID device removed: {serial}");
             }
         }
         private void SetUpSensor(TrackerDevice device, int trackerId, ImuType sensorType, TrackerStatus sensorStatus, MagnetometerStatus magStatus)
@@ -238,62 +243,54 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 return device;
             }
         }
-        private void DataRead()
+        private void DataReadLoop(HidDevice hidDevice)
         {
-            while (true)
+            string serial = hidDevice.GetSerialNumber() ?? "Unknown";
+            int[] q = new int[4];
+            int[] a = new int[3];
+            int[] m = new int[3];
+
+            while (!disposed)
             {
                 try
                 {
-                    int[] q = new int[4];
-                    int[] a = new int[3];
-                    int[] m = new int[3];
-
-                    lock (devicesByHID)
+                    if (!hidDevice.TryOpen(out var stream))
                     {
-                        bool devicesPresent = false;
-                        bool devicesDataReceived = false;
+                        break;
+                    }
 
-                        foreach (var kvp in devicesByHID)
+                    using (stream)
+                    {
+                        while (!disposed)
                         {
-                            HidDevice hidDevice = kvp.Key;
-                            List<int> deviceList = kvp.Value;
-
-                            HidStream stream = null;
-                            if (!hidDevice.TryOpen(out stream))
+                            List<int> deviceList;
+                            lock (devicesByHID)
                             {
-                                continue;
+                                if (!devicesByHID.TryGetValue(hidDevice, out deviceList))
+                                    break;
                             }
-                            byte[] newData = new byte[65]; // 1 byte report ID + 64 bytes payload
+
+                            byte[] newData = new byte[65];
                             int bytesRead = stream.Read(newData, 0, newData.Length);
-                            int offset = (newData.Length % PACKET_SIZE == 0) ? 0 : 1;
-                            int validLength = newData.Length - offset;
+                            if (bytesRead <= 0) continue;
+
+                            int offset = (bytesRead % PACKET_SIZE == 0) ? 0 : 1;
+                            int validLength = bytesRead - offset;
                             byte[] dataReceived = new byte[validLength];
                             Array.Copy(newData, offset, dataReceived, 0, validLength);
-                            if (dataReceived.Length == 0)
-                            {
-                                continue;
-                            }
-                            devicesPresent = true;
 
                             if (dataReceived.Length % PACKET_SIZE != 0)
-                            {
-                                Console.WriteLine("[TrackerServer] Malformed HID packet, ignoring");
                                 continue;
-                            }
-
-                            devicesDataReceived = true;
-                            lastDataByHID[hidDevice] = 0;
 
                             int packetCount = dataReceived.Length / PACKET_SIZE;
-
                             for (int i = 0; i < packetCount * PACKET_SIZE; i += PACKET_SIZE)
                             {
                                 int packetType = dataReceived[i];
                                 int id = dataReceived[i + 1];
-                                int trackerId = 0; // no extensions in this context
+                                int trackerId = 0;
                                 int deviceId = id;
 
-                                if (packetType == 255) // Device register packet
+                                if (packetType == 255) // register
                                 {
                                     byte[] data = new byte[8];
                                     Array.Copy(dataReceived, i + 2, data, 0, 8);
@@ -304,30 +301,24 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                 }
 
                                 var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
-                                if (device == null)
-                                {
-                                    continue;
-                                }
+                                if (device == null) continue;
 
-                                if (packetType == 0) // Tracker register
+                                if (packetType == 0) // tracker info
                                 {
                                     uint imuId = dataReceived[i + 8];
                                     uint magId = dataReceived[i + 9];
                                     var sensorType = (ImuType)imuId;
                                     var magStatus = (MagnetometerStatus)magId;
-                                    if (sensorType != ImuType.UNKNOWN && magStatus != null)
+                                    if (sensorType != ImuType.UNKNOWN)
                                     {
                                         SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
                                     }
                                 }
 
                                 var tracker = device.GetTracker(trackerId);
-                                if (tracker == null)
-                                {
-                                    continue;
-                                }
+                                if (tracker == null) continue;
 
-                                // Variables for data fields
+                                // variables
                                 int? batt = null, batt_v = null, temp = null, brd_id = null, mcu_id = null;
                                 int? fw_date = null, fw_major = null, fw_minor = null, fw_patch = null;
                                 int? svr_status = null, rssi = null;
@@ -347,18 +338,14 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                         rssi = dataReceived[i + 15];
                                         break;
 
-                                    case 1: // full precision quat and accel
+                                    case 1: // full quad/accel
                                         for (int j = 0; j < 4; j++)
-                                        {
                                             q[j] = (short)((dataReceived[i + 2 + j * 2 + 1]) << 8) | (dataReceived[i + 2 + j * 2]);
-                                        }
                                         for (int j = 0; j < 3; j++)
-                                        {
                                             a[j] = (short)((dataReceived[i + 10 + j * 2 + 1]) << 8) | (dataReceived[i + 10 + j * 2]);
-                                        }
                                         break;
 
-                                    case 2: // reduced precision quat and accel with data
+                                    case 2: // reduced precision
                                         batt = dataReceived[i + 2];
                                         batt_v = dataReceived[i + 3];
                                         temp = dataReceived[i + 4];
@@ -369,9 +356,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                         q[1] = (int)((q_buf >> 10) & 2047);
                                         q[2] = (int)((q_buf >> 21) & 2047);
                                         for (int j = 0; j < 3; j++)
-                                        {
                                             a[j] = (short)((dataReceived[i + 9 + j * 2 + 1]) << 8) | (dataReceived[i + 9 + j * 2]);
-                                        }
                                         rssi = dataReceived[i + 15];
                                         break;
 
@@ -382,144 +367,68 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
                                     case 4: // full precision quat and mag
                                         for (int j = 0; j < 4; j++)
-                                        {
                                             q[j] = (short)((dataReceived[i + 2 + j * 2 + 1]) << 8) | (dataReceived[i + 2 + j * 2]);
-                                        }
                                         for (int j = 0; j < 3; j++)
-                                        {
                                             m[j] = (short)((dataReceived[i + 10 + j * 2 + 1]) << 8) | (dataReceived[i + 10 + j * 2]);
-                                        }
                                         break;
                                 }
 
-                                // Assign battery level
-                                if (batt != null)
-                                {
-                                    tracker.BatteryLevel = (batt == 128) ? 1f : (batt.Value & 127);
-                                }
-                                // Battery voltage
-                                if (batt_v != null)
-                                {
-                                    tracker.BatteryVoltage = (batt_v.Value + 245f) / 100f;
-                                }
-                                // Temperature
-                                if (temp != null)
-                                {
-                                    tracker.Temperature = (temp > 0) ? (temp.Value / 2f - 39f) : (float?)null;
-                                }
+                                if (batt != null) tracker.BatteryLevel = (batt == 128) ? 1f : (batt.Value & 127);
+                                if (batt_v != null) tracker.BatteryVoltage = (batt_v.Value + 245f) / 100f;
+                                if (temp != null) tracker.Temperature = (temp > 0) ? (temp.Value / 2f - 39f) : (float?)null;
+                                if (brd_id != null) device.BoardType = (BoardType)brd_id.Value;
+                                if (mcu_id != null) device.McuType = (McuType)mcu_id.Value;
 
-                                // Board Type
-                                if (brd_id != null)
-                                {
-                                    var boardType = (BoardType)brd_id.Value;
-                                    if (boardType != null)
-                                    {
-                                        device.BoardType = boardType;
-                                    }
-                                }
-
-                                // MCU Type
-                                if (mcu_id != null)
-                                {
-                                    var mcuType = (McuType)mcu_id.Value;
-                                    if (mcuType != null)
-                                    {
-                                        device.McuType = mcuType;
-                                    }
-                                }
-
-                                // Firmware version string
                                 if (fw_date != null && fw_major != null && fw_minor != null && fw_patch != null)
                                 {
                                     int firmwareYear = 2020 + ((fw_date.Value >> 9) & 127);
                                     int firmwareMonth = (fw_date.Value >> 5) & 15;
                                     int firmwareDay = fw_date.Value & 31;
-                                    string firmwareDate = $"{firmwareYear:D4}-{firmwareMonth:D2}-{firmwareDay:D2}";
-                                    device.FirmwareVersion = $"{fw_major}.{fw_minor}.{fw_patch} (Build {firmwareDate})";
+                                    device.FirmwareVersion = $"{fw_major}.{fw_minor}.{fw_patch} (Build {firmwareYear:D4}-{firmwareMonth:D2}-{firmwareDay:D2})";
                                 }
 
-                                // Tracker status
-                                if (svr_status != null)
-                                {
-                                    var status = (TrackerStatus)svr_status.Value;
-                                    if (status != null)
-                                    {
-                                        tracker.Status = status;
-                                    }
-                                }
+                                if (svr_status != null) tracker.Status = (TrackerStatus)svr_status.Value;
+                                if (rssi != null) tracker.SignalStrength = -rssi.Value;
 
-                                // RSSI / Signal strength
-                                if (rssi != null)
-                                {
-                                    tracker.SignalStrength = -rssi.Value;
-                                }
-
-                                // Rotation and acceleration
                                 if (packetType == 1 || packetType == 4)
                                 {
-                                    // Convert Q15 short to float and reorder quaternion as x,y,z,w
-                                    var rot = new Quaternion(
-                                        q[0] / 32768f,
-                                        q[1] / 32768f,
-                                        q[2] / 32768f,
-                                        q[3] / 32768f
-                                    );
-
+                                    var rot = new Quaternion(q[0] / 32768f, q[1] / 32768f, q[2] / 32768f, q[3] / 32768f);
                                     tracker.SetRotation(rot);
                                 }
-
                                 if (packetType == 2)
                                 {
                                     float[] v = new float[3];
-                                    v[0] = q[0] / 1024f;
-                                    v[1] = q[1] / 2048f;
-                                    v[2] = q[2] / 2048f;
-
-                                    for (int x = 0; x < 3; x++)
-                                    {
-                                        v[x] = v[x] * 2 - 1;
-                                    }
-
+                                    v[0] = q[0] / 1024f; v[1] = q[1] / 2048f; v[2] = q[2] / 2048f;
+                                    for (int x = 0; x < 3; x++) v[x] = v[x] * 2 - 1;
                                     float d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
                                     float invSqrtD = 1.0f / (float)Math.Sqrt(d + 1e-6f);
                                     float aAngle = (float)(Math.PI / 2) * d * invSqrtD;
                                     float s = (float)Math.Sin(aAngle);
                                     float k = s * invSqrtD;
-
-                                    var rot = new Quaternion(
-                                        k * v[0],
-                                        k * v[1],
-                                        k * v[2],
-                                        (float)Math.Cos(aAngle)
-                                    );
+                                    var rot = new Quaternion(k * v[0], k * v[1], k * v[2], (float)Math.Cos(aAngle));
                                     tracker.SetRotation(rot);
                                 }
-
                                 if (packetType == 1 || packetType == 2)
                                 {
                                     float scaleAccel = 1f / (1 << 7);
                                     Vector3 acceleration = new Vector3(a[0], a[1], a[2]) * scaleAccel;
                                     tracker.SetAcceleration(Unsandwich(acceleration));
                                 }
-
                                 if (packetType == 4)
                                 {
                                     Vector3 magnetometer = new Vector3(m[0], m[1], m[2]) * (1000f / 1024f);
                                     device.MagnetometerStatus = MagnetometerStatus.ENABLED;
                                     tracker.SetMagVector(magnetometer);
                                 }
-
-                                if (packetType == 1 || packetType == 2 || packetType == 4)
-                                {
-                                    tracker.DataTick();
-                                }
+                                if (packetType == 1 || packetType == 2 || packetType == 4) tracker.DataTick();
                             }
                         }
                     }
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine(e);
+                    Console.WriteLine($"[TrackerServer] DataReadLoop error for {serial}: {e.Message}");
+                    Thread.Sleep(1000);
                 }
             }
         }

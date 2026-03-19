@@ -23,9 +23,9 @@ namespace EsbReceiverToLanAndroid.Platforms.Android.Services;
 [Preserve(AllMembers = true)]
 [Service(ForegroundServiceType = ForegroundService.TypeDataSync, Exported = true)]
 public class TrackerListenerService : Service {
-    private static bool _running = false;
-    private Thread _thread;
-    private static TrackerListenerService _instance;
+    private bool _running = false;
+    private Thread? _thread;
+    private static TrackerListenerService? _instance;
     private UsbDevice? _pendingUsbDevice;
 
     public static TrackerListenerService Instance { get => _instance; set => _instance = value; }
@@ -100,10 +100,12 @@ public class TrackerListenerService : Service {
     public override IBinder OnBind(Intent intent) => null;
 
     public override void OnDestroy() {
-        Log.Info("TrackerListenerService", "Service Destroyed");
+        Log.Info("TrackerListenerService", "Service Destroying...");
         StopTrackerWork();
         UDPHandler.ForceDestroy();
+        if (_instance == this) _instance = null;
         base.OnDestroy();
+        Log.Info("TrackerListenerService", "Service Destroyed.");
     }
 
     private void ShowNotification() {
@@ -139,7 +141,8 @@ public class TrackerListenerService : Service {
     }
 
     public override StartCommandResult OnStartCommand(Intent intent, StartCommandFlags flags, int startId) {
-        string action = intent?.Action;
+        string action = intent?.Action ?? "NO_ACTION";
+        Log.Info("TrackerListenerService", $"OnStartCommand receiver action: {action}");
 
         if (action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_DEVICE_ATTACHED") {
             var device = intent?.GetParcelableExtra(UsbManager.ExtraDevice) as UsbDevice;
@@ -166,6 +169,13 @@ public class TrackerListenerService : Service {
                     return StartCommandResult.NotSticky;
                 }
             }
+            return StartCommandResult.NotSticky;
+        }
+
+        if (action == "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_STOP_SERVICE") {
+            Log.Info("TrackerListenerService", "Stop service action received.");
+            StopTrackerWork();
+            StopSelf();
             return StartCommandResult.NotSticky;
         }
 

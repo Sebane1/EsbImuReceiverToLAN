@@ -42,6 +42,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         bool alreadyRunning = false;
         bool disposed = false;
 
+        private readonly HashSet<string> _pendingPermissionRequests = new();
         private UsbPermissionReceiver usbPermissionReceiver;
 
         private class UsbDeviceContext
@@ -110,7 +111,17 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
                     if (!usbManager.HasPermission(device))
                     {
-                        RequestPermission(device);
+                        string dKey = device.DeviceName ?? device.DeviceId.ToString();
+                        bool alreadyPending;
+                        lock (_pendingPermissionRequests)
+                        {
+                            alreadyPending = _pendingPermissionRequests.Contains(dKey);
+                        }
+
+                        if (!alreadyPending)
+                        {
+                            RequestPermission(device);
+                        }
                         return; // Only request one at a time
                     }
                     OpenDevice(device);
@@ -130,11 +141,19 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
             var filter = new IntentFilter("com.SebaneStudios.USB_PERMISSION");
 
+            string deviceKey = device.DeviceName ?? device.DeviceId.ToString();
+            lock (_pendingPermissionRequests)
+            {
+                _pendingPermissionRequests.Add(deviceKey);
+            }
+
             if ((int)Build.VERSION.SdkInt >= 33) // Android 13+, technically needed from 31
             {
                 // 0x2 = RECEIVER_NOT_EXPORTED
                 Application.Context.RegisterReceiver(
-                    new UsbPermissionReceiver(OpenDevice),
+                    new UsbPermissionReceiver(OpenDevice, (dKey) => {
+                        lock (_pendingPermissionRequests) { _pendingPermissionRequests.Remove(dKey); }
+                    }),
                     filter,
                     null,
                     null,
@@ -143,7 +162,9 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
             else
             {
                 Application.Context.RegisterReceiver(
-                    new UsbPermissionReceiver(OpenDevice),
+                    new UsbPermissionReceiver(OpenDevice, (dKey) => {
+                        lock (_pendingPermissionRequests) { _pendingPermissionRequests.Remove(dKey); }
+                    }),
                     filter);
             }
 
@@ -718,10 +739,12 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         private class UsbPermissionReceiver : BroadcastReceiver
         {
             private readonly Action<UsbDevice> onGranted;
+            private readonly Action<string> onFinished;
 
-            public UsbPermissionReceiver(Action<UsbDevice> onGranted)
+            public UsbPermissionReceiver(Action<UsbDevice> onGranted, Action<string> onFinished)
             {
                 this.onGranted = onGranted;
+                this.onFinished = onFinished;
             }
 
             public override void OnReceive(Context context, Intent intent)
@@ -732,6 +755,9 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
                     bool granted = intent.GetBooleanExtra(UsbManager.ExtraPermissionGranted, false);
                     Console.WriteLine($"[UsbPermissionReceiver] Permission result for device {device?.DeviceName}: granted = {granted}");
+
+                    string deviceKey = device?.DeviceName ?? device?.DeviceId.ToString() ?? "";
+                    onFinished?.Invoke(deviceKey);
 
                     if (granted && device != null)
                     {
