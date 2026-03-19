@@ -22,16 +22,15 @@ typedef struct {
 } hid_host_event_queue_t;
 
 typedef struct {
-    hid_host_device_handle_t hid_device;
-    uint8_t data[64];
-    size_t length;
+  hid_host_device_handle_t hid_device;
+  uint8_t data[64];
+  size_t length;
 } hid_report_t;
 
 #define HID_REPORT_POOL_SIZE 32
 static hid_report_t hid_report_pool[HID_REPORT_POOL_SIZE];
 static QueueHandle_t hid_data_queue = NULL;
 static QueueHandle_t free_report_queue = NULL;
-
 
 static void
 hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
@@ -43,28 +42,29 @@ hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
 
   switch (event) {
   case HID_HOST_INTERFACE_EVENT_INPUT_REPORT: {
-    if (!hid_data_queue || !free_report_queue) break;
+    if (!hid_data_queue || !free_report_queue)
+      break;
 
-    hid_report_t* report = NULL;
+    hid_report_t *report = NULL;
     // Pop a free buffer pointer from the pool queue
     if (xQueueReceive(free_report_queue, &report, 0) == pdTRUE) {
-        size_t data_length = 0;
-        esp_err_t err = hid_host_device_get_raw_input_report_data(
-            hid_device_handle, report->data, 64, &data_length);
-        
-        if (err == ESP_OK && data_length > 0) {
-            report->hid_device = hid_device_handle;
-            report->length = (data_length > 64) ? 64 : data_length;
-            
-            // Send the pointer to the data queue
-            if (xQueueSend(hid_data_queue, &report, 0) != pdTRUE) {
-                // Data queue full, return to free pool
-                xQueueSend(free_report_queue, &report, 0);
-            }
-        } else {
-            // Error or no data, return buffer to free pool
-            xQueueSend(free_report_queue, &report, 0);
+      size_t data_length = 0;
+      esp_err_t err = hid_host_device_get_raw_input_report_data(
+          hid_device_handle, report->data, 64, &data_length);
+
+      if (err == ESP_OK && data_length > 0) {
+        report->hid_device = hid_device_handle;
+        report->length = (data_length > 64) ? 64 : data_length;
+
+        // Send the pointer to the data queue
+        if (xQueueSend(hid_data_queue, &report, 0) != pdTRUE) {
+          // Data queue full, return to free pool
+          xQueueSend(free_report_queue, &report, 0);
         }
+      } else {
+        // Error or no data, return buffer to free pool
+        xQueueSend(free_report_queue, &report, 0);
+      }
     }
     break;
   }
@@ -166,22 +166,27 @@ static void hid_host_device_callback(hid_host_device_handle_t hid_device_handle,
   xQueueSend(hid_host_event_queue, &evt_queue, 0);
 }
 
-UsbHidHandler::UsbHidHandler() { _udpClient = nullptr; }
+UsbHidHandler::UsbHidHandler() {
+  _udpClient = nullptr;
+  _lastReportTime = 0;
+}
 
 void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
   _udpClient = udpClient;
   g_udpClient = udpClient;
-  
+  _lastReportTime = millis();
+
   // Create queues to hold POINTERS to buffers (minimizes copying)
-  hid_data_queue = xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t*));
-  free_report_queue = xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t*));
+  hid_data_queue = xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t *));
+  free_report_queue =
+      xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t *));
 
-  // Pre-seed the free queue with pointers to ALL buffers in our pre-allocated pool
+  // Pre-seed the free queue with pointers to ALL buffers in our pre-allocated
+  // pool
   for (int i = 0; i < HID_REPORT_POOL_SIZE; i++) {
-      hid_report_t* report = &hid_report_pool[i];
-      xQueueSend(free_report_queue, &report, 0);
+    hid_report_t *report = &hid_report_pool[i];
+    xQueueSend(free_report_queue, &report, 0);
   }
-
 
   BaseType_t task_created =
       xTaskCreatePinnedToCore(usb_lib_task, "usb_events", 4096,
@@ -207,21 +212,23 @@ void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
 }
 
 void UsbHidHandler::loop() {
-    if (!hid_data_queue || !free_report_queue || !_udpClient) return;
+  if (!hid_data_queue || !free_report_queue || !_udpClient)
+    return;
 
-    hid_report_t* report = NULL;
-    // Process all pending report pointers off the data queue
-    while (xQueueReceive(hid_data_queue, &report, 0) == pdTRUE) {
-        processHidData(_udpClient, report->hid_device, report->data, report->length);
-        
-        // Recycling: Push the pointer back to the free queue for reuse by the USB stack
-        xQueueSend(free_report_queue, &report, 0);
-    }
+  hid_report_t *report = NULL;
+  // Process all pending report pointers off the data queue
+  while (xQueueReceive(hid_data_queue, &report, 0) == pdTRUE) {
+    processHidData(_udpClient, report->hid_device, report->data,
+                   report->length);
+    updateActivity();
+
+    /* Recycling: Push the pointer back to the free queue for reuse by the USB
+     * stack*/
+    xQueueSend(free_report_queue, &report, 0);
+  }
 }
 
-
-// Below is the translated parser logic from TrackersHID.cs
-// Call this function from your USB HID IN Report callback
+// Translated parser logic from TrackersHID.cs
 static float q15ToFloat(int16_t q) { return q / 32768.0f; }
 
 static float q11ToFloat(int16_t q) { return q / 1024.0f; }
@@ -248,7 +255,9 @@ void processHidData(SlimeUdpClient *udpClient,
     if (packetType == 255) {
       if (dongleIdToTrackerIndex.find(id) == dongleIdToTrackerIndex.end() &&
           nextTrackerIndex < 15) {
-        DEBUG_PRINTF("New Device Registered: ID %d assigning Tracker Index %d\n", id, nextTrackerIndex);
+        DEBUG_PRINTF(
+            "New Device Registered: ID %d assigning Tracker Index %d\n", id,
+            nextTrackerIndex);
         dongleIdToTrackerIndex[id] = nextTrackerIndex++;
       }
 
@@ -269,18 +278,20 @@ void processHidData(SlimeUdpClient *udpClient,
 
     if (packetType == 0) {
       uint8_t imuId = dataReceived[i + 8];
-      
+
       int brd_id = dataReceived[i + 5];
       int mcu_id = dataReceived[i + 6];
 
       int fw_major = dataReceived[i + 12];
       int fw_minor = dataReceived[i + 13];
       int fw_patch = dataReceived[i + 14];
-      
+
       char firmwareStr[32];
-      snprintf(firmwareStr, sizeof(firmwareStr), "ESB %d.%d.%d", fw_major, fw_minor, fw_patch);
-      
-      udpClient->initializeTracker(trackerIndex, storedMacs[trackerIndex], (int)imuId, brd_id, mcu_id, firmwareStr);
+      snprintf(firmwareStr, sizeof(firmwareStr), "ESB %d.%d.%d", fw_major,
+               fw_minor, fw_patch);
+
+      udpClient->initializeTracker(trackerIndex, storedMacs[trackerIndex],
+                                   (int)imuId, brd_id, mcu_id, firmwareStr);
       continue;
     }
 
@@ -371,43 +382,41 @@ void processHidData(SlimeUdpClient *udpClient,
       break;
     }
 
-    // Limiter removed for stress testing. 
-    // The previous stability fixes (heap guards and proper data population) 
-    // should now prevent crashes even at raw 500Hz-1000Hz update rates.
-    VirtualTracker* vt = udpClient->getTracker(trackerIndex);
+    VirtualTracker *vt = udpClient->getTracker(trackerIndex);
     if (vt) {
-        vt->lastSendDataTime = millis();
+      vt->lastSendDataTime = millis();
 
-        // PPS Reduction: Alternate between Rotation and Acceleration
-        // instead of sending both every frame (halves packet pressure)
-        if (vt->updateCounter % 2 == 0) {
-            if (hasRotation) {
-                udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
-            }
-        } else {
-            if (hasAccel) {
-                udpClient->sendAcceleration(trackerIndex, ax, ay, az);
-            }
+      // PPS Reduction: Alternate between Rotation and Acceleration
+      // instead of sending both every frame (halves packet pressure)
+      if (vt->updateCounter % 2 == 0) {
+        if (hasRotation) {
+          udpClient->sendRotation(trackerIndex, qx, qy, qz, qw);
         }
-        vt->updateCounter++;
-
-        if (hasBattery && batt != -1) {
-            // Battery reporting is very infrequent in SlimeVR. 
-            // Only send every 30 seconds to avoid network flood.
-            if (millis() - vt->lastBatterySendTime > 30000) {
-                vt->lastBatterySendTime = millis();
-                
-                float percentage = (batt == 128) ? 100.0f : (batt & 127);
-                if (percentage > 100.0f) percentage = 100.0f;
-
-                float voltage = (batt_v >= 0) ? ((batt_v + 245.0f) / 100.0f) : 3.3f; 
-                udpClient->sendBattery(trackerIndex, voltage, percentage);
-            }
+      } else {
+        if (hasAccel) {
+          udpClient->sendAcceleration(trackerIndex, ax, ay, az);
         }
+      }
+      vt->updateCounter++;
 
-        // Staggering: Give the Wi-Fi driver time to handle each packet
-        // to prevent filling the internal hardware queue too fast.
-        delayMicroseconds(400);
+      if (hasBattery && batt != -1) {
+        // Battery reporting is less time sensitive.
+        // Only send every 10 seconds to avoid network flood.
+        if (millis() - vt->lastBatterySendTime > 10000) {
+          vt->lastBatterySendTime = millis();
+
+          float percentage = (batt == 128) ? 100.0f : (batt & 127);
+          if (percentage > 100.0f)
+            percentage = 100.0f;
+
+          float voltage = (batt_v >= 0) ? ((batt_v + 245.0f) / 100.0f) : 3.3f;
+          udpClient->sendBattery(trackerIndex, voltage, percentage);
+        }
+      }
+
+      // Staggering: Give the Wi-Fi driver time to handle each packet
+      // to prevent filling the internal hardware queue too fast.
+      delayMicroseconds(400);
     }
   }
 }

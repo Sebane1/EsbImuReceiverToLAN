@@ -31,6 +31,8 @@ void setup() {
 }
 
 void loop() {
+    static bool usbInitialized = false;
+
     // Process WiFi Portal (if active)
     WiFiManager::loop();
     
@@ -40,7 +42,6 @@ void loop() {
     // Check WiFi Connection for Data Flow
     if (millis() - lastLoopCheck > 500) {
         lastLoopCheck = millis();
-        static bool usbInitialized = false;
         static uint32_t wifiConnectTime = 0;
         bool isConnected = WiFiManager::isConnected();
 
@@ -88,4 +89,10 @@ void loop() {
 
     // Process USB HID events
     usbHandler.loop();
+
+    // HID Watchdog: Reboot if data stalls for too long
+    if (usbInitialized && (millis() - usbHandler.getLastReportTime() > HID_WATCHDOG_TIMEOUT_MS)) {
+        // Note: No Serial logging here because SerialManager is deinitialized in Host mode
+        ESP.restart();
+    }
 }
