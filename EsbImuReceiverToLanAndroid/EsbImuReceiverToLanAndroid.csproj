@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>net10.0-android</TargetFrameworks>
@@ -9,26 +9,29 @@
     <SingleProject>true</SingleProject>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <ApplicationTitle>EsbReceiverToLanAndroid</ApplicationTitle>
-    <ApplicationId>com.SebaneStudios.EsbImuReceiverToLanAndroid</ApplicationId>
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationTitle>Sebane's Receiver To LAN</ApplicationTitle>
+    <ApplicationId>com.SebaneStudios.EsbReceiverToWifiAndroid</ApplicationId>
+    <ApplicationVersion>18</ApplicationVersion>
+    <ApplicationDisplayVersion>1.2</ApplicationDisplayVersion>
     <WindowsPackageType>None</WindowsPackageType>
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
     <Configurations>Debug;Release;Release-Phone;Release-Quest</Configurations>
+    <JavaMaximumHeapSize>4G</JavaMaximumHeapSize>
   </PropertyGroup>
 
   <!-- ========================= -->
   <!-- Phone Release Build -->
   <!-- ========================= -->
-  <PropertyGroup Condition="&#xD;&#xA;    '$(Configuration)'=='Release-Phone' &#xD;&#xA;    and '$(TargetFrameworkIdentifier)'=='android'">
+  <PropertyGroup Condition="'$(Configuration)'=='Release-Phone'">
     <AndroidKeyStore>true</AndroidKeyStore>
-    <AndroidSigningStore>I:\Visual Studio\EsbImuReceiverToLAN\smolslimetolan.keystore</AndroidSigningStore>
+	<AndroidSigningKeyStore>I:\Visual Studio\EsbImuReceiverToLAN\smolslimetolan.keystore</AndroidSigningKeyStore>
     <AndroidSigningKeyAlias>smolslimetolan</AndroidSigningKeyAlias>
     <AndroidSigningKeyPass>2b703a48-a227-455f-9a10-66cbbac19535</AndroidSigningKeyPass>
     <AndroidSigningStorePass>2b703a48-a227-455f-9a10-66cbbac19535</AndroidSigningStorePass>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <AndroidLinkMode>None</AndroidLinkMode>
+    <PublishTrimmed>false</PublishTrimmed>
+    <AndroidUseAssemblyStore>false</AndroidUseAssemblyStore>
 
     <!-- Use full permissions manifest -->
     <AndroidManifest>Platforms/Android/AndroidManifest.xml</AndroidManifest>
@@ -37,14 +40,20 @@
   <!-- ========================= -->
   <!-- Meta Quest Release Build -->
   <!-- ========================= -->
-  <PropertyGroup Condition="&#xD;&#xA;    '$(Configuration)'=='Release-Quest' &#xD;&#xA;    and '$(TargetFrameworkIdentifier)'=='android'">
+  <PropertyGroup Condition="'$(Configuration)'=='Release-Quest'">
     <AndroidKeyStore>true</AndroidKeyStore>
-    <AndroidSigningStore>I:\Visual Studio\EsbImuReceiverToLAN\smolslimetolan.keystore</AndroidSigningStore>
+	<AndroidSigningKeyStore>I:\Visual Studio\EsbImuReceiverToLAN\smolslimetolan.keystore</AndroidSigningKeyStore>
     <AndroidSigningKeyAlias>smolslimetolan</AndroidSigningKeyAlias>
     <AndroidSigningKeyPass>2b703a48-a227-455f-9a10-66cbbac19535</AndroidSigningKeyPass>
     <AndroidSigningStorePass>2b703a48-a227-455f-9a10-66cbbac19535</AndroidSigningStorePass>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
     <AndroidLinkMode>None</AndroidLinkMode>
+    <PublishTrimmed>false</PublishTrimmed>
+    <AndroidUseAssemblyStore>false</AndroidUseAssemblyStore>
+    <Optimize>true</Optimize>
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
+    <AndroidIncludeDebugSymbols>false</AndroidIncludeDebugSymbols>
 
     <!-- Use Quest-specific manifest -->
     <AndroidManifest>Platforms/Android/AndroidManifest.Quest.xml</AndroidManifest>

@@ -8,7 +8,7 @@ using SlimeImuProtocol.SlimeVR;
 using AOS = Android.OS;
 
 namespace EsbReceiverToLanAndroid {
-    [BroadcastReceiver(Enabled = true, Exported = true, Name = "com.SebaneStudios.EsbReceiverToLanAndroid.TrackerUsbReceiver")]
+    [BroadcastReceiver(Enabled = true, Exported = true, Name = "com.SebaneStudios.EsbReceiverToWifiAndroid.TrackerUsbReceiver")]
     [IntentFilter(new[] { "android.hardware.usb.action.USB_DEVICE_ATTACHED" })]
     [IntentFilter(new[] { UsbManager.ActionUsbDeviceDetached })]
     [IntentFilter(new[] { ActionLastDeviceDetached })]
@@ -17,7 +17,7 @@ namespace EsbReceiverToLanAndroid {
     public class TrackerUsbReceiver : BroadcastReceiver {
         private const int HID_TRACKER_RECEIVER_VID = 0x1209;
         private const int HID_TRACKER_RECEIVER_PID = 0x7690;
-        public const string ActionLastDeviceDetached = "com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_LAST_DEVICE_DETACHED";
+        public const string ActionLastDeviceDetached = "com.SebaneStudios.EsbReceiverToWifiAndroid.ACTION_LAST_DEVICE_DETACHED";
 
         public static EventHandler OnDeviceConnected;
         public static EventHandler OnDeviceDisconnected;
@@ -35,7 +35,7 @@ namespace EsbReceiverToLanAndroid {
                 if (device != null && device.VendorId == HID_TRACKER_RECEIVER_VID && device.ProductId == HID_TRACKER_RECEIVER_PID) {
                     var detachIntent = new Intent(context, typeof(TrackerListenerService));
                     detachIntent.SetPackage(context.PackageName);
-                    detachIntent.SetAction("com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_DEVICE_DETACHED");
+                    detachIntent.SetAction("com.SebaneStudios.EsbReceiverToWifiAndroid.ACTION_USB_DEVICE_DETACHED");
                     detachIntent.PutExtra(UsbManager.ExtraDevice, device);
                     context.StartService(detachIntent);
                 }
@@ -57,7 +57,7 @@ namespace EsbReceiverToLanAndroid {
             OnDeviceConnected?.Invoke(null, EventArgs.Empty);
             var serviceIntent = new Intent(context, typeof(TrackerListenerService));
             serviceIntent.SetPackage(context.PackageName);
-            serviceIntent.SetAction("com.SebaneStudios.EsbReceiverToLanAndroid.ACTION_USB_DEVICE_ATTACHED");
+            serviceIntent.SetAction("com.SebaneStudios.EsbReceiverToWifiAndroid.ACTION_USB_DEVICE_ATTACHED");
             if (device != null)
                 serviceIntent.PutExtra(UsbManager.ExtraDevice, device);
             if (AOS.Build.VERSION.SdkInt >= AOS.BuildVersionCodes.O)

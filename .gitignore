@@ -8,3 +8,4 @@ EsbImuReceiverToLanAndroid/obj
 EsbImuReceiverToLanAndroid/bin/Release
 *.keystore
 keytool
+EsbImuReceiverToLanAndroid/bin
