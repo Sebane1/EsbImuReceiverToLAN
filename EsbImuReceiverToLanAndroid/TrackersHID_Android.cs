@@ -41,6 +41,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
         private readonly Dictionary<int, Tracker> activeTrackers = new();
         bool alreadyRunning = false;
         bool disposed = false;
+        private static readonly Dictionary<int, string> _persistentDeviceNames = new();
 
         private readonly HashSet<string> _pendingPermissionRequests = new();
         private UsbPermissionReceiver usbPermissionReceiver;
@@ -272,7 +273,14 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 // If deviceName is null, device isn't registered yet
                 if (deviceName == null)
                 {
-                    return null;
+                    if (_persistentDeviceNames.TryGetValue(deviceId, out var savedName))
+                    {
+                        deviceName = savedName;
+                    }
+                    else
+                    {
+                        return null;
+                    }
                 }
 
                 // Create and register a new HIDDevice
@@ -350,6 +358,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                         Array.Copy(dataReceived, i + 2, data, 0, 8);
                                         ulong addr = BitConverter.ToUInt64(data, 0) & 0xFFFFFFFFFFFF;
                                         string deviceName = addr.ToString("X12");
+                                        _persistentDeviceNames[deviceId] = deviceName;
                                         DeviceIdLookup(deviceKey, deviceId, deviceName, deviceList);
                                         continue;
                                     }

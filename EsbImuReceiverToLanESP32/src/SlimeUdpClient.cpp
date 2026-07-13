@@ -463,7 +463,7 @@ void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType,
   _bufSensorInfo[offset++] = 1;
 
   _bufSensorInfo[offset++] = 0; // Tracker Position (none)
-  _bufSensorInfo[offset++] = 1; // Tracker Data Type (ROTATION)
+  _bufSensorInfo[offset++] = 0; // Tracker Data Type (ROTATION)
 
   if (!_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort))
     return;
