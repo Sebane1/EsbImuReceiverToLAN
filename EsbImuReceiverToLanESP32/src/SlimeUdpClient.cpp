@@ -491,7 +491,8 @@ void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy,
   // Rate Cap (Optimization)
   // Ensure we don't send data more than once every 4ms (Allows 100Hz Rotation +
   // 100Hz Accel interleaved)
-  if (millis() - vt.lastMovementPacketTime < 4) {
+  uint32_t currentMillis = millis();
+  if (currentMillis - vt.lastMovementPacketTime < 4) {
     return;
   }
 
@@ -500,9 +501,9 @@ void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy,
   // one.
   float dot = (qx * vt.last_qx) + (qy * vt.last_qy) + (qz * vt.last_qz) +
               (qw * vt.last_qw);
-  float diff = 1.0f - abs(dot);
+  float diff = 1.0f - fabsf(dot);
   if (diff < MOVEMENT_THRESHOLD_QUAT &&
-      (millis() - vt.lastMovementPacketTime < 500)) {
+      (currentMillis - vt.lastMovementPacketTime < 500)) {
     return;
   }
 
@@ -576,7 +577,7 @@ void SlimeUdpClient::sendRotation(uint8_t trackerIndex, float qx, float qy,
     vt.last_qy = qy;
     vt.last_qz = qz;
     vt.last_qw = qw;
-    vt.lastMovementPacketTime = millis();
+    vt.lastMovementPacketTime = currentMillis;
   }
 }
 
@@ -589,7 +590,8 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay,
   VirtualTracker &vt = _trackers[trackerIndex];
 
   // Rate Cap (Optimization)
-  if (millis() - vt.lastMovementPacketTime < 4) {
+  uint32_t currentMillis = millis();
+  if (currentMillis - vt.lastMovementPacketTime < 4) {
     return;
   }
 
@@ -599,7 +601,7 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay,
   float dz = az - vt.last_az;
   float distSq = (dx * dx) + (dy * dy) + (dz * dz);
   if (distSq < (MOVEMENT_THRESHOLD_ACCEL * MOVEMENT_THRESHOLD_ACCEL) &&
-      (millis() - vt.lastMovementPacketTime < 500)) {
+      (currentMillis - vt.lastMovementPacketTime < 500)) {
     return;
   }
 
@@ -663,7 +665,7 @@ void SlimeUdpClient::sendAcceleration(uint8_t trackerIndex, float ax, float ay,
     vt.last_ax = ax;
     vt.last_ay = ay;
     vt.last_az = az;
-    vt.lastMovementPacketTime = millis();
+    vt.lastMovementPacketTime = currentMillis;
   }
 }
 

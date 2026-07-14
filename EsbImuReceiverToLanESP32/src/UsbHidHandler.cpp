@@ -4,7 +4,6 @@
 
 #include "hid_host.h"
 #include "usb/usb_host.h"
-#include <map>
 #include <utility>
 
 extern void processHidData(SlimeUdpClient *udpClient,
@@ -241,9 +240,13 @@ void processHidData(SlimeUdpClient *udpClient,
     return; // Malformed
   }
 
-  // A map to keep track of which hardware ID maps to which trackerIndex (0-39)
   // Handle-Agnostic: We use only the 1-byte ESB 'id' as the key.
-  static std::map<uint8_t, uint8_t> dongleIdToTrackerIndex;
+  static uint8_t dongleIdToTrackerIndex[256];
+  static bool mapInitialized = false;
+  if (!mapInitialized) {
+    memset(dongleIdToTrackerIndex, 0xFF, sizeof(dongleIdToTrackerIndex));
+    mapInitialized = true;
+  }
   static uint8_t nextTrackerIndex = 0;
   static uint8_t storedMacs[40][6] = {0};
 
@@ -253,15 +256,14 @@ void processHidData(SlimeUdpClient *udpClient,
     uint8_t id = dataReceived[i + 1];
 
     if (packetType == 255) {
-      if (dongleIdToTrackerIndex.find(id) == dongleIdToTrackerIndex.end() &&
-          nextTrackerIndex < 15) {
+      if (dongleIdToTrackerIndex[id] == 0xFF && nextTrackerIndex < 15) {
         DEBUG_PRINTF(
             "New Device Registered: ID %d assigning Tracker Index %d\n", id,
             nextTrackerIndex);
         dongleIdToTrackerIndex[id] = nextTrackerIndex++;
       }
 
-      if (dongleIdToTrackerIndex.find(id) != dongleIdToTrackerIndex.end()) {
+      if (dongleIdToTrackerIndex[id] != 0xFF) {
         uint8_t tIdx = dongleIdToTrackerIndex[id];
         // MAC Address is in bytes 2-7
         memcpy(storedMacs[tIdx], &dataReceived[i + 2], 6);
@@ -269,7 +271,7 @@ void processHidData(SlimeUdpClient *udpClient,
       continue;
     }
 
-    if (dongleIdToTrackerIndex.find(id) == dongleIdToTrackerIndex.end()) {
+    if (dongleIdToTrackerIndex[id] == 0xFF) {
       // We haven't seen a register packet for this tracker ID yet, ignore data
       continue;
     }
@@ -353,21 +355,21 @@ void processHidData(SlimeUdpClient *udpClient,
       a[2] = (dataReceived[i + 14] << 8) | dataReceived[i + 13];
 
       float v[3];
-      v[0] = q0 / 1024.0f;
-      v[1] = q1 / 2048.0f;
-      v[2] = q2 / 2048.0f;
+      v[0] = q0 * (1.0f / 1024.0f);
+      v[1] = q1 * (1.0f / 2048.0f);
+      v[2] = q2 * (1.0f / 2048.0f);
       for (int x = 0; x < 3; ++x)
         v[x] = v[x] * 2.0f - 1.0f;
 
       float d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-      float invSqrtD = 1.0f / sqrt(d + 1e-6f);
+      float invSqrtD = 1.0f / sqrtf(d + 1e-6f);
       float aAngle = (PI / 2.0f) * d * invSqrtD;
-      float s = sin(aAngle);
+      float s = sinf(aAngle);
       float k = s * invSqrtD;
       qx = k * v[0];
       qy = k * v[1];
       qz = k * v[2];
-      qw = cos(aAngle);
+      qw = cosf(aAngle);
       hasRotation = true;
 
       float scaleAccel = 1.0f / 128.0f;
