@@ -522,7 +522,9 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                     // RSSI / Signal strength
                                     if (rssi != null)
                                     {
-                                        tracker.SignalStrength = -rssi.Value;
+                                        int esbRssi = -rssi.Value;
+                                        int wifiRssi = GetAndroidWifiRssi();
+                                        tracker.SignalStrength = CalculateCombinedRssi(esbRssi, wifiRssi);
                                     }
 
                                     // Rotation and acceleration
@@ -804,6 +806,33 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     Console.WriteLine($"[UsbPermissionReceiver] Received unexpected intent: {intent.Action}");
                 }
             }
+        }
+
+        public static int CalculateCombinedRssi(int esbRssi, int wifiRssi)
+        {
+            if (esbRssi == 0) return wifiRssi;
+
+            float qEsb = Math.Clamp((esbRssi + 100f) / 70f, 0f, 1f);
+            float qWifi = Math.Clamp((wifiRssi + 100f) / 70f, 0f, 1f);
+
+            float qCombined = qEsb * qWifi;
+            return (int)Math.Clamp(-100f + (qCombined * 70f), -100f, -30f);
+        }
+
+        private static int GetAndroidWifiRssi()
+        {
+#if ANDROID
+            try
+            {
+                var wifiManager = (Android.Net.Wifi.WifiManager)Android.App.Application.Context.GetSystemService(Android.Content.Context.WifiService);
+                if (wifiManager?.ConnectionInfo != null)
+                {
+                    return wifiManager.ConnectionInfo.Rssi;
+                }
+            }
+            catch { }
+#endif
+            return -50;
         }
     }
 }

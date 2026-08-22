@@ -9,7 +9,7 @@
 #define SLIMEVR_SERVER_PORT 6969
 
 // Network Stability
-#define HANDSHAKE_COOLDOWN_MS 2000      // Wait 2 seconds before re-handshaking after a timeout
+#define HANDSHAKE_COOLDOWN_MS 30000     // Wait 30 seconds before re-handshaking after a timeout
 #define HID_WATCHDOG_TIMEOUT_MS 2000    // Reboot if no HID data for 2 seconds (Tightened for faster recovery)
 
 // Movement Thresholds (Optimization)

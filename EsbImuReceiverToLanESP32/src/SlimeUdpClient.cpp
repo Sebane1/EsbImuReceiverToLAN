@@ -65,8 +65,6 @@ void SlimeUdpClient::onWiFiConnect() {
     if (i == 15) {
       _trackers[i].active = true;
       memcpy(_trackers[i].hardwareAddress, mac, 6);
-      _trackers[i].hardwareAddress[0] |= 0x02; // Local admin bit
-      _trackers[i].hardwareAddress[5] = (mac[5] + 15) & 0xFF;
       _trackers[i].imuType = 0;
       _trackers[i].boardType = 0;
       _trackers[i].mcuType = 4;
@@ -106,8 +104,6 @@ void SlimeUdpClient::initializeTracker(uint8_t trackerIndex,
 
   vt.active = true;
   memcpy(vt.hardwareAddress, mac, 6);
-  vt.hardwareAddress[0] |= 0x02; // Local admin bit
-  vt.hardwareAddress[5] = (mac[5] + trackerIndex) & 0xFF;
   vt.packetId = 0;
   vt.handshakeOngoing = true;
   vt.isInitialized = false;
@@ -180,7 +176,6 @@ void SlimeUdpClient::loop() {
       vt.handshakeOngoing = true;
       vt.handshakeRetryCount = 0;
       vt.lastHandshakeTime = 0;
-      vt.packetId = 0; // Reset packet sequence for reconnect so server accepts packet 0
       vt.lastTimeoutTime = millis(); // Start the cooldown
     }
 
@@ -299,10 +294,9 @@ void SlimeUdpClient::loop() {
 }
 
 long SlimeUdpClient::nextPacketId(uint8_t trackerIndex) {
-  if (trackerIndex < 16) {
-    return _trackers[trackerIndex].packetId++;
-  }
-  return 0;
+  if (trackerIndex >= 16)
+    return 0;
+  return _trackers[trackerIndex].packetId++;
 }
 
 void SlimeUdpClient::sendHeartbeat(uint8_t trackerIndex) {

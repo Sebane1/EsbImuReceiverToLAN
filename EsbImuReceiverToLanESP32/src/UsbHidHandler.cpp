@@ -147,7 +147,6 @@ static void usb_lib_task(void *arg) {
 
 static void hid_host_task(void *pvParameters) {
   hid_host_event_queue_t evt_queue;
-  hid_host_event_queue = xQueueCreate(10, sizeof(hid_host_event_queue_t));
 
   while (true) {
     if (xQueueReceive(hid_host_event_queue, &evt_queue, portMAX_DELAY)) {
@@ -176,6 +175,7 @@ void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
   _lastReportTime = millis();
 
   // Create queues to hold POINTERS to buffers (minimizes copying)
+  hid_host_event_queue = xQueueCreate(10, sizeof(hid_host_event_queue_t));
   hid_data_queue = xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t *));
   free_report_queue =
       xQueueCreate(HID_REPORT_POOL_SIZE, sizeof(hid_report_t *));
