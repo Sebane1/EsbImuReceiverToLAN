@@ -4,4 +4,4 @@ Potential use cases are extending the effective range of the trackers from just 
 
 Also useful for ShadowPC users.
 
-Current supported platforms are Windows, Quest, Android, and ESP32-S3
+Current supported platforms are Windows, Linux, Quest, Android, and ESP32-S3
