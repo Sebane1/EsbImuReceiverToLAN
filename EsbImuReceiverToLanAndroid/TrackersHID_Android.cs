@@ -256,7 +256,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 imuTracker.Status = sensorStatus;
             }
         }
-        private TrackerDevice DeviceIdLookup(string deviceKey, int deviceId, string deviceName, List<int> deviceList)
+        private TrackerDevice DeviceIdLookup(string deviceKey, int deviceId, string? deviceName, List<int> deviceList)
         {
             lock (devices)
             {
@@ -266,20 +266,21 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     var dev = devices[index];
                     if (dev.Id == deviceId)
                     {
+                        if (deviceName != null && dev.HardwareIdentifier.StartsWith("ESB_DEV_"))
+                        {
+                            dev.HardwareIdentifier = deviceName;
+                            dev.Name = deviceName;
+                        }
                         return dev;
                     }
                 }
 
-                // If deviceName is null, device isn't registered yet
+                // If deviceName is null, try persistent names or fallback
                 if (deviceName == null)
                 {
-                    if (_persistentDeviceNames.TryGetValue(deviceId, out var savedName))
+                    if (!_persistentDeviceNames.TryGetValue(deviceId, out deviceName))
                     {
-                        deviceName = savedName;
-                    }
-                    else
-                    {
-                        return null;
+                        deviceName = $"ESB_DEV_{deviceId:X2}";
                     }
                 }
 
@@ -349,7 +350,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                 {
                                     int packetType = dataReceived[i];
                                     int id = dataReceived[i + 1];
-                                    int trackerId = 0; // no extensions in this context
+                                    int trackerId = 0; // Each TrackerDevice has 1 main sensor (sensorId 0)
                                     int deviceId = id;
 
                                     if (packetType == 255) // Device register packet
@@ -379,6 +380,16 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                         {
                                             SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
                                         }
+                                    }
+
+                                    if (device.GetTracker(trackerId) == null && (packetType == 1 || packetType == 2 || packetType == 4))
+                                    {
+                                        SetUpSensor(device, trackerId, ImuType.BNO085, TrackerStatus.OK, MagnetometerStatus.DISABLED);
+                                    }
+
+                                    if (string.IsNullOrEmpty(device.FirmwareVersion))
+                                    {
+                                        device.FirmwareVersion = "1.0.0_ESB";
                                     }
 
                                     var tracker = device.GetTracker(trackerId);

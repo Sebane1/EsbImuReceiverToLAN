@@ -84,16 +84,24 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     }
 
                     Console.WriteLine($"[TrackerServer] Linked HID device reattached: {serial}");
-
                     UDPHandler.ForceUDPClientsToDoHandshake();
-                    return;
+
+                    lock (deviceReadThreads)
+                    {
+                        if (deviceReadThreads.ContainsKey(serial))
+                        {
+                            return;
+                        }
+                    }
                 }
+                else
+                {
+                    var list = new List<int>();
+                    devicesBySerial[serial] = list;
+                    devicesByHID[hidDevice] = list;
 
-                var list = new List<int>();
-                devicesBySerial[serial] = list;
-                devicesByHID[hidDevice] = list;
-
-                Console.WriteLine($"[TrackerServer] (Probably) Compatible HID device detected: {serial}");
+                    Console.WriteLine($"[TrackerServer] (Probably) Compatible HID device detected: {serial}");
+                }
 
                 var readThread = new Thread(() => DataReadLoop(hidDevice))
                 {
@@ -204,7 +212,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                 imuTracker.Status = sensorStatus;
             }
         }
-        private TrackerDevice DeviceIdLookup(HidDevice hidDevice, int deviceId, string deviceName, List<int> deviceList)
+        private TrackerDevice DeviceIdLookup(HidDevice hidDevice, int deviceId, string? deviceName, List<int> deviceList)
         {
             lock (devices)
             {
@@ -214,14 +222,19 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                     var dev = devices[index];
                     if (dev.Id == deviceId)
                     {
+                        if (deviceName != null && dev.HardwareIdentifier.StartsWith("ESB_DEV_"))
+                        {
+                            dev.HardwareIdentifier = deviceName;
+                            dev.Name = deviceName;
+                        }
                         return dev;
                     }
                 }
 
-                // If deviceName is null, device isn't registered yet
+                // If deviceName is null, create fallback name based on deviceId
                 if (deviceName == null)
                 {
-                    return null;
+                    deviceName = $"ESB_DEV_{deviceId:X2}";
                 }
 
                 // Create and register a new HIDDevice
@@ -287,7 +300,6 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                             {
                                 int packetType = dataReceived[i];
                                 int id = dataReceived[i + 1];
-                                int trackerId = 0;
                                 int deviceId = id;
 
                                 if (packetType == 255) // register
@@ -302,6 +314,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
 
                                 var device = DeviceIdLookup(hidDevice, deviceId, null, deviceList);
                                 if (device == null) continue;
+                                int trackerId = device.SensorId; // Globally unique sensorId (0, 1, 2...)
 
                                 if (packetType == 0) // tracker info
                                 {
@@ -313,6 +326,16 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                                     {
                                         SetUpSensor(device, trackerId, sensorType, TrackerStatus.OK, magStatus);
                                     }
+                                }
+
+                                if (device.GetTracker(trackerId) == null && (packetType == 1 || packetType == 2 || packetType == 4))
+                                {
+                                    SetUpSensor(device, trackerId, ImuType.BNO085, TrackerStatus.OK, MagnetometerStatus.DISABLED);
+                                }
+
+                                if (string.IsNullOrEmpty(device.FirmwareVersion))
+                                {
+                                    device.FirmwareVersion = "1.0.0_ESB";
                                 }
 
                                 var tracker = device.GetTracker(trackerId);

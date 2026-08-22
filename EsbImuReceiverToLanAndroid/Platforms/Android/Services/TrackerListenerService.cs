@@ -27,6 +27,7 @@ public class TrackerListenerService : Service {
     private Thread? _thread;
     private static TrackerListenerService? _instance;
     private UsbDevice? _pendingUsbDevice;
+    private global::Android.Net.Wifi.WifiManager.MulticastLock? _multicastLock;
 
     public static TrackerListenerService Instance { get => _instance; set => _instance = value; }
     TrackersHID_Android _trackersHid;
@@ -50,12 +51,32 @@ public class TrackerListenerService : Service {
             return;
         }
 
+        try {
+            var wifiManager = (global::Android.Net.Wifi.WifiManager?)GetSystemService(Context.WifiService);
+            if (wifiManager != null) {
+                _multicastLock = wifiManager.CreateMulticastLock("EsbSlimeMulticastLock");
+                _multicastLock.SetReferenceCounted(false);
+                _multicastLock.Acquire();
+                Log.Info("TrackerListenerService", "Acquired Wi-Fi MulticastLock for UDP broadcast.");
+            }
+        } catch (Exception ex) {
+            Log.Warn("TrackerListenerService", $"Failed to acquire MulticastLock: {ex.Message}");
+        }
+
         _running = true;
         _thread = new Thread(HIDTrackerReader);
         _thread.Start();
     }
     public void StopTrackerWork() {
         Log.Info("TrackerListenerService", "Stopping tracker work...");
+
+        try {
+            if (_multicastLock != null && _multicastLock.IsHeld) {
+                _multicastLock.Release();
+                _multicastLock = null;
+                Log.Info("TrackerListenerService", "Released Wi-Fi MulticastLock.");
+            }
+        } catch { }
 
         _trackersHid?.StopReading();
         _trackersHid = null;
