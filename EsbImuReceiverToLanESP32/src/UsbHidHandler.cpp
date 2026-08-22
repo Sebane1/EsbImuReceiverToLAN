@@ -34,11 +34,6 @@ static QueueHandle_t free_report_queue = NULL;
 static void
 hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
                             const hid_host_interface_event_t event, void *arg) {
-  uint8_t data[64] = {0};
-  size_t data_length = 0;
-  hid_host_dev_params_t dev_params;
-  ESP_ERROR_CHECK(hid_host_device_get_params(hid_device_handle, &dev_params));
-
   switch (event) {
   case HID_HOST_INTERFACE_EVENT_INPUT_REPORT: {
     if (!hid_data_queue || !free_report_queue)
@@ -70,11 +65,16 @@ hid_host_interface_callback(hid_host_device_handle_t hid_device_handle,
 
   case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
     DEBUG_PRINTLN("HID Device DISCONNECTED");
-    ESP_ERROR_CHECK(hid_host_device_close(hid_device_handle));
+    hid_host_device_close(hid_device_handle);
     break;
-  case HID_HOST_INTERFACE_EVENT_TRANSFER_ERROR:
+  case HID_HOST_INTERFACE_EVENT_TRANSFER_ERROR: {
     DEBUG_PRINTLN("HID Device TRANSFER_ERROR");
+    static uint8_t errCount = 0;
+    if (++errCount > 5) {
+      ESP.restart();
+    }
     break;
+  }
   default:
     break;
   }
@@ -84,7 +84,9 @@ static void hid_host_device_event(hid_host_device_handle_t hid_device_handle,
                                   const hid_host_driver_event_t event,
                                   void *arg) {
   hid_host_dev_params_t dev_params;
-  ESP_ERROR_CHECK(hid_host_device_get_params(hid_device_handle, &dev_params));
+  if (hid_host_device_get_params(hid_device_handle, &dev_params) != ESP_OK) {
+    return;
+  }
   const hid_host_device_config_t dev_config = {
       .callback = hid_host_interface_callback, .callback_arg = NULL};
 
@@ -188,7 +190,7 @@ void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
   }
 
   BaseType_t task_created =
-      xTaskCreatePinnedToCore(usb_lib_task, "usb_events", 4096,
+      xTaskCreatePinnedToCore(usb_lib_task, "usb_events", 8192,
                               xTaskGetCurrentTaskHandle(), 2, NULL, 0);
   assert(task_created == pdTRUE);
 
@@ -197,14 +199,14 @@ void UsbHidHandler::begin(SlimeUdpClient *udpClient) {
   const hid_host_driver_config_t hid_host_driver_config = {
       .create_background_task = true,
       .task_priority = 5,
-      .stack_size = 4096,
+      .stack_size = 8192,
       .core_id = 0,
       .callback = hid_host_device_callback,
       .callback_arg = NULL};
   ESP_ERROR_CHECK(hid_host_install(&hid_host_driver_config));
 
   task_created =
-      xTaskCreate(&hid_host_task, "hid_task", 4 * 1024, NULL, 2, NULL);
+      xTaskCreate(&hid_host_task, "hid_task", 8192, NULL, 2, NULL);
   assert(task_created == pdTRUE);
 
   DEBUG_PRINTLN("USB Host Handler Initialized.");
