@@ -421,14 +421,63 @@ void SlimeUdpClient::sendHandshake(uint8_t trackerIndex,
         lastErrorLog = millis();
       }
     }
-
-    // Send twice but with a tiny gap to ensure the server stack can handle it.
-    delayMicroseconds(500);
-    if (_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort)) {
-      _trackers[trackerIndex].udp.write(_bufHandshake, offset);
-      _trackers[trackerIndex].udp.endPacket();
-    }
   }
+}
+
+static inline float constrain_f(float val, float min_val, float max_val) {
+    if (val < min_val) return min_val;
+    if (val > max_val) return max_val;
+    return val;
+}
+
+static int8_t calculateCombinedRssi(int8_t esbRssi, int8_t wifiRssi) {
+    if (esbRssi == 0) return wifiRssi; // Fallback if ESB RSSI is unavailable
+    
+    // Clamp RSSI between -100 dBm (0%) and -30 dBm (100%)
+    float qEsb = constrain_f((esbRssi + 100.0f) / 70.0f, 0.0f, 1.0f);
+    float qWifi = constrain_f((wifiRssi + 100.0f) / 70.0f, 0.0f, 1.0f);
+    
+    float qCombined = qEsb * qWifi;
+    int combinedDbm = -100 + (int)(qCombined * 70.0f);
+    if (combinedDbm < -100) combinedDbm = -100;
+    if (combinedDbm > -30) combinedDbm = -30;
+    return (int8_t)combinedDbm;
+}
+
+void SlimeUdpClient::sendSignalStrength(uint8_t trackerIndex, int8_t esbRssi) {
+  if (trackerIndex >= 16 || !_trackers[trackerIndex].active ||
+      !_trackers[trackerIndex].isInitialized)
+    return;
+
+  int8_t wifiRssi = (WiFi.status() == WL_CONNECTED) ? (int8_t)WiFi.RSSI() : -100;
+  int8_t combinedRssi = calculateCombinedRssi(esbRssi, wifiRssi);
+
+  uint8_t buf[16];
+  int offset = 0;
+
+  int packetType = 19; // SIGNAL_STRENGTH
+  buf[offset++] = (packetType >> 24) & 0xFF;
+  buf[offset++] = (packetType >> 16) & 0xFF;
+  buf[offset++] = (packetType >> 8) & 0xFF;
+  buf[offset++] = packetType & 0xFF;
+
+  long id = nextPacketId(trackerIndex);
+  buf[offset++] = ((uint64_t)id >> 56) & 0xFF;
+  buf[offset++] = ((uint64_t)id >> 48) & 0xFF;
+  buf[offset++] = ((uint64_t)id >> 40) & 0xFF;
+  buf[offset++] = ((uint64_t)id >> 32) & 0xFF;
+  buf[offset++] = ((uint64_t)id >> 24) & 0xFF;
+  buf[offset++] = ((uint64_t)id >> 16) & 0xFF;
+  buf[offset++] = ((uint64_t)id >> 8) & 0xFF;
+  buf[offset++] = id & 0xFF;
+
+  buf[offset++] = 0; // Sensor ID 0
+  buf[offset++] = (uint8_t)combinedRssi; // Signal Strength (dBm)
+
+  if (!_trackers[trackerIndex].udp.beginPacket(_serverIp, _serverPort))
+    return;
+  _trackers[trackerIndex].udp.write(buf, offset);
+  _trackers[trackerIndex].udp.endPacket();
 }
 
 void SlimeUdpClient::addTracker(uint8_t trackerIndex, int imuType,

@@ -49,6 +49,7 @@ public:
     void sendRotation(uint8_t trackerIndex, float qx, float qy, float qz, float qw);
     void sendAcceleration(uint8_t trackerIndex, float ax, float ay, float az);
     void sendBattery(uint8_t trackerIndex, float voltage, float batteryPercentage);
+    void sendSignalStrength(uint8_t trackerIndex, int8_t esbRssi);
 
 
 private:

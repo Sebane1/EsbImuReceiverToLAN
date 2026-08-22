@@ -297,7 +297,7 @@ void processHidData(SlimeUdpClient *udpClient,
       continue;
     }
 
-    int batt = -1, batt_v = -1;
+    int batt = -1, batt_v = -1, rssi = -1;
     float ax = 0, ay = 0, az = 0;
     float qx = 0, qy = 0, qz = 0, qw = 1.0f;
     bool hasAccel = false, hasRotation = false, hasBattery = false;
@@ -306,6 +306,7 @@ void processHidData(SlimeUdpClient *udpClient,
     case 0: // device info
       batt = dataReceived[i + 2];
       batt_v = dataReceived[i + 3];
+      rssi = dataReceived[i + 15];
       hasBattery = true;
       break;
     case 1:   // full precision quat and accel
@@ -338,6 +339,7 @@ void processHidData(SlimeUdpClient *udpClient,
     case 2: { // reduced precision quat and accel
       batt = dataReceived[i + 2];
       batt_v = dataReceived[i + 3];
+      rssi = dataReceived[i + 15];
       hasBattery = true;
 
       uint32_t q_buf = ((uint32_t)dataReceived[i + 5]) |
@@ -380,7 +382,7 @@ void processHidData(SlimeUdpClient *udpClient,
       break;
     }
     case 3: // status
-      // Status packet
+      rssi = dataReceived[i + 15];
       break;
     }
 
@@ -413,6 +415,9 @@ void processHidData(SlimeUdpClient *udpClient,
 
           float voltage = (batt_v >= 0) ? ((batt_v + 245.0f) / 100.0f) : 3.3f;
           udpClient->sendBattery(trackerIndex, voltage, percentage);
+          if (rssi != -1 && rssi != 0) {
+            udpClient->sendSignalStrength(trackerIndex, -rssi);
+          }
         }
       }
 
