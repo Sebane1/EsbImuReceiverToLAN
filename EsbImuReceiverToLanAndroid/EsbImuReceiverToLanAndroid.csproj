@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>net10.0-android</TargetFrameworks>
@@ -17,6 +17,7 @@
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
     <Configurations>Debug;Release;Release-Phone;Release-Quest</Configurations>
     <JavaMaximumHeapSize>4G</JavaMaximumHeapSize>
+    <AndroidSigningKeyStore>smolslimetolan.keystore</AndroidSigningKeyStore>
   </PropertyGroup>
 
   <!-- ========================= -->
@@ -32,6 +33,10 @@
     <AndroidLinkMode>None</AndroidLinkMode>
     <PublishTrimmed>false</PublishTrimmed>
     <AndroidUseAssemblyStore>false</AndroidUseAssemblyStore>
+    <Optimize>true</Optimize>
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
+    <AndroidIncludeDebugSymbols>false</AndroidIncludeDebugSymbols>
 
     <!-- Use full permissions manifest -->
     <AndroidManifest>Platforms/Android/AndroidManifest.xml</AndroidManifest>
@@ -59,20 +64,25 @@
     <AndroidManifest>Platforms/Android/AndroidManifest.Quest.xml</AndroidManifest>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-android|AnyCPU'">
-    <ApplicationVersion>8</ApplicationVersion>
-    <ApplicationDisplayVersion>1.8</ApplicationDisplayVersion>
+    <ApplicationVersion>10</ApplicationVersion>
+    <ApplicationDisplayVersion>2.0</ApplicationDisplayVersion>
+    <ApplicationTitle>EsbReceiverToWifiAndroid</ApplicationTitle>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-android|AnyCPU'">
-    <ApplicationVersion>8</ApplicationVersion>
-    <ApplicationDisplayVersion>1.8</ApplicationDisplayVersion>
+    <ApplicationVersion>10</ApplicationVersion>
+    <ApplicationDisplayVersion>2.0</ApplicationDisplayVersion>
+    <ApplicationTitle>EsbReceiverToWifiAndroid</ApplicationTitle>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release-Phone|net10.0-android|AnyCPU'">
-    <ApplicationVersion>8</ApplicationVersion>
-    <ApplicationDisplayVersion>1.8</ApplicationDisplayVersion>
+    <ApplicationVersion>10</ApplicationVersion>
+    <ApplicationDisplayVersion>2.0</ApplicationDisplayVersion>
+    <ApplicationTitle>EsbReceiverToWifiAndroid</ApplicationTitle>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release-Quest|net10.0-android|AnyCPU'">
-    <ApplicationVersion>8</ApplicationVersion>
-    <ApplicationDisplayVersion>1.8</ApplicationDisplayVersion>
+    <ApplicationVersion>10</ApplicationVersion>
+    <ApplicationDisplayVersion>2.0</ApplicationDisplayVersion>
+    <ApplicationTitle>EsbReceiverToWifiAndroid</ApplicationTitle>
   </PropertyGroup>
 
   <!-- ========================= -->

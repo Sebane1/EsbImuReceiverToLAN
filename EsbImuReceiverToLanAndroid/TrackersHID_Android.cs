@@ -564,7 +564,7 @@ namespace EsbImuReceiverToLan.Tracking.Trackers.HID
                         {
                             float scaleAccel = 1f / (1 << 7);
                             Vector3 acceleration = new Vector3(a[0], a[1], a[2]) * scaleAccel;
-                            tracker.SetAcceleration(Unsandwich(acceleration));
+                            tracker.SetAcceleration(acceleration);
                         }
 
                         if (packetType == 4)
